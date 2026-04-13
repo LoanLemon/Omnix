@@ -60,7 +60,7 @@ function createTray() {
     }}
   ]);
 
-  tray.setToolTip('OmniTrader Studio');
+  tray.setToolTip('Omnix');
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {
