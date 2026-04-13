@@ -1,26 +1,43 @@
 {
-  "name": "Omnix",
+  "name": "omnix",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.js",
+  "author": "LemOne Labs/Dustin Lee",
+  "description": "Local AI Workstation. Multi-modal capabilities (TTS, Image, Vision, Music) using WebGPU/WASM.",
   "scripts": {
     "dev": "tsx server.ts",
     "electron:dev": "wait-on tcp:3000 && electron .",
     "start": "concurrently -k \"npm run dev\" \"npm run electron:dev\"",
-    "electron:build": "vite build && electron-builder",
-    "build": "vite build",
+    "build:ui": "vite build",
+    "build:server": "tsc server.ts --outDir . --module esnext --target esnext --moduleResolution bundler --allowJs --skipLibCheck",
+    "electron:build": "npm run build:ui && npm run build:server && electron-builder",
     "lint": "tsc --noEmit",
-    "preview": "vite preview",
     "clean": "rm -rf dist"
+  },
+  "build": {
+    "appId": "com.lemonelabs.omnix",
+    "productName": "Omnix Studio",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "server.js",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "electron/icon.png"
+    }
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
     "@fontsource-variable/geist": "^5.2.8",
     "@huggingface/transformers": "^4.0.1",
     "@radix-ui/react-slider": "^1.3.6",
-    "@tailwindcss/vite": "^4.1.14",
-    "@vitejs/plugin-react": "^5.0.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cors": "^2.8.6",
@@ -42,14 +59,18 @@
     "vite": "^6.2.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.14",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
+    "concurrently": "^9.1.0",
     "electron": "^41.2.0",
+    "electron-builder": "^25.1.8",
     "electron-is-dev": "^3.0.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "wait-on": "^8.0.1"
   }
 }
