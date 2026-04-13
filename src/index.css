@@ -149,20 +149,20 @@
 }
 
 .markdown-content {
-  @apply space-y-4 break-words break-all;
+  @apply space-y-4 break-words;
   word-break: break-word;
 }
 .markdown-content p {
   @apply leading-relaxed break-words;
 }
 .markdown-content code {
-  @apply bg-zinc-800 px-1.5 py-0.5 rounded text-[11px] font-mono text-orange-400;
+  @apply bg-muted px-1.5 py-0.5 rounded text-[11px] font-mono text-orange-500;
 }
 .markdown-content pre {
-  @apply bg-black/50 border border-zinc-800 rounded-lg p-4 overflow-x-auto my-4;
+  @apply bg-muted/50 border border-border rounded-lg p-4 overflow-x-auto my-4;
 }
 .markdown-content pre code {
-  @apply bg-transparent p-0 text-zinc-300 block;
+  @apply bg-transparent p-0 text-foreground block;
 }
 .markdown-content ul, .markdown-content ol {
   @apply pl-6 space-y-2;
@@ -174,7 +174,7 @@
   @apply list-decimal;
 }
 .markdown-content h1, .markdown-content h2, .markdown-content h3 {
-  @apply font-bold text-zinc-100 mt-6 mb-2;
+  @apply font-bold text-foreground mt-6 mb-2;
 }
 .markdown-content h1 { @apply text-xl; }
 .markdown-content h2 { @apply text-lg; }
@@ -183,5 +183,5 @@
   @apply text-orange-500 hover:underline;
 }
 .markdown-content blockquote {
-  @apply border-l-2 border-zinc-700 pl-4 italic text-zinc-400;
+  @apply border-l-2 border-border pl-4 italic text-muted-foreground;
 }

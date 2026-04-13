@@ -55,17 +55,17 @@ export function Sidebar({
   };
 
   return (
-    <aside className="w-72 border-right border-zinc-800 bg-zinc-950 flex flex-col shrink-0 overflow-y-auto">
+    <aside className="w-72 border-r border-border bg-background flex flex-col shrink-0 overflow-y-auto">
       <div className="p-4 space-y-6">
         {isElectron && (
           <section className="space-y-3">
-            <div className="flex items-center gap-2 text-zinc-500">
+            <div className="flex items-center gap-2 text-muted-foreground">
               <FolderOpen className="w-3 h-3" />
               <span className="text-[10px] font-bold uppercase tracking-widest">Electron Filesystem</span>
             </div>
             <Button 
               variant="outline" 
-              className="w-full h-8 bg-zinc-900 border-zinc-800 text-[10px] gap-2"
+              className="w-full h-8 bg-muted border-border text-[10px] gap-2"
               onClick={handleOpenFile}
             >
               <FolderOpen className="w-3 h-3" />
@@ -75,18 +75,18 @@ export function Sidebar({
         )}
 
         <section className="space-y-3">
-          <div className="flex items-center justify-between text-zinc-500">
+          <div className="flex items-center justify-between text-muted-foreground">
             <div className="flex items-center gap-2">
               <Cpu className="w-3 h-3" />
               <span className="text-[10px] font-bold uppercase tracking-widest">Heap Usage</span>
             </div>
             <span className="text-[10px] font-mono">{heapUsage.used}MB / {heapUsage.limit}MB</span>
           </div>
-          <Progress value={(heapUsage.used / heapUsage.limit) * 100} className="h-1 bg-zinc-800" />
+          <Progress value={(heapUsage.used / heapUsage.limit) * 100} className="h-1 bg-muted" />
         </section>
 
         <section className="space-y-3">
-          <div className="flex items-center gap-2 text-zinc-500">
+          <div className="flex items-center gap-2 text-muted-foreground">
             <Settings2 className="w-3 h-3" />
             <span className="text-[10px] font-bold uppercase tracking-widest">Model Orchestration</span>
           </div>
@@ -98,7 +98,7 @@ export function Sidebar({
             return (
               <div key={cat} className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[9px] text-zinc-500 uppercase">{cat.replace("-", " ")}</span>
+                  <span className="text-[9px] text-muted-foreground uppercase">{cat.replace("-", " ")}</span>
                   {isCategoryDisabled(cat) && <span className="text-[8px] text-red-500 font-bold">LOW RAM</span>}
                 </div>
                 <div className="flex gap-1.5">
@@ -108,13 +108,13 @@ export function Sidebar({
                       onValueChange={(val) => setSelectedModels((prev: any) => ({ ...prev, [cat]: val }))}
                       disabled={isModelLoading}
                     >
-                      <SelectTrigger className="h-7 bg-zinc-900 border-zinc-800 text-[10px]">
+                      <SelectTrigger className="h-7 bg-muted border-border text-[10px]">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="bg-zinc-900 border-zinc-800">
+                      <SelectContent className="bg-popover border-border">
                         {Array.from(new Set(modelsInCategory.map(m => m.make))).map(make => (
                           <SelectGroup key={make}>
-                            <SelectLabel className="text-[9px] text-zinc-600 uppercase px-2">{make}</SelectLabel>
+                            <SelectLabel className="text-[9px] text-muted-foreground uppercase px-2">{make}</SelectLabel>
                             {modelsInCategory.filter(m => m.make === make).map(m => (
                               <SelectItem key={m.id} value={m.id} className="text-[10px]" disabled={m.minRam && m.minRam > systemRam}>
                                 {m.name}
@@ -125,14 +125,14 @@ export function Sidebar({
                       </SelectContent>
                     </Select>
                   ) : (
-                    <div className="flex-1 h-7 flex items-center px-3 bg-zinc-900/30 border border-zinc-800/50 rounded-md text-[10px] text-zinc-400 italic">
+                    <div className="flex-1 h-7 flex items-center px-3 bg-muted/30 border border-border/50 rounded-md text-[10px] text-muted-foreground italic">
                       {modelsInCategory[0]?.name || "No model available"}
                     </div>
                   )}
                   <Button 
                     size="icon" 
                     variant="outline" 
-                    className={`h-7 w-7 shrink-0 ${activeCategory === cat ? "border-orange-500/50 bg-orange-500/10 text-orange-500" : "border-zinc-800"}`}
+                    className={`h-7 w-7 shrink-0 ${activeCategory === cat ? "border-orange-500/50 bg-orange-500/10 text-orange-500" : "border-border"}`}
                     onClick={() => loadModel(cat)}
                     disabled={isModelLoading}
                   >
@@ -145,21 +145,21 @@ export function Sidebar({
         </section>
 
         <section className="space-y-3">
-          <div className="flex items-center gap-2 text-zinc-500">
+          <div className="flex items-center gap-2 text-muted-foreground">
             <Activity className="w-3 h-3" />
             <span className="text-[10px] font-bold uppercase tracking-widest">System Monitor</span>
           </div>
-          <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800 space-y-4">
+          <div className="p-3 rounded-lg bg-muted/50 border border-border space-y-4">
             <div className="space-y-1.5">
-              <div className="flex justify-between text-[9px] text-zinc-500">
+              <div className="flex justify-between text-[9px] text-muted-foreground">
                 <span>Context Cache</span>
                 <span>{(memoryUsage.used / 1024 / 1024).toFixed(1)} MB</span>
               </div>
-              <Progress value={(memoryUsage.used / (memoryUsage.total * (ramLimitPercent / 100))) * 100} className="h-1 bg-zinc-800" />
+              <Progress value={(memoryUsage.used / (memoryUsage.total * (ramLimitPercent / 100))) * 100} className="h-1 bg-muted" />
             </div>
 
             <div className="space-y-2">
-              <div className="flex justify-between text-[9px] text-zinc-500">
+              <div className="flex justify-between text-[9px] text-muted-foreground">
                 <span>RAM Usage Limit</span>
                 <span className="text-orange-500 font-bold">{ramLimitPercent}%</span>
               </div>
@@ -174,7 +174,7 @@ export function Sidebar({
             </div>
 
             <div className="space-y-2 pt-1">
-              <div className="flex justify-between text-[9px] text-zinc-500">
+              <div className="flex justify-between text-[9px] text-muted-foreground">
                 <span>Live Mode Capture Timer</span>
                 <span className="text-orange-500 font-bold">{liveModeTimer}s</span>
               </div>
@@ -191,8 +191,8 @@ export function Sidebar({
             <div className="space-y-2 pt-1">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Database className={`w-3 h-3 ${enableRAG ? "text-orange-500" : "text-zinc-600"}`} />
-                  <span className="text-[9px] text-zinc-400">Long-term Memory</span>
+                  <Database className={`w-3 h-3 ${enableRAG ? "text-orange-500" : "text-muted-foreground"}`} />
+                  <span className="text-[9px] text-muted-foreground">Long-term Memory</span>
                 </div>
                 <Switch 
                   checked={enableRAG} 
@@ -200,7 +200,7 @@ export function Sidebar({
                   className="scale-75 data-[state=checked]:bg-orange-600"
                 />
               </div>
-              <div className="flex justify-between text-[8px] text-zinc-600 italic px-1">
+              <div className="flex justify-between text-[8px] text-muted-foreground italic px-1">
                 <span>{enableRAG ? "Active (RAG Enabled)" : "Disabled (Faster Chat)"}</span>
                 <span>{longTermMemories} memories</span>
               </div>
@@ -209,15 +209,15 @@ export function Sidebar({
             <div className="space-y-2 pt-1">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Bot className={`w-3 h-3 ${speakEnabled ? "text-orange-500" : "text-zinc-600"}`} />
-                  <span className="text-[9px] text-zinc-400">Speak Responses</span>
+                  <Bot className={`w-3 h-3 ${speakEnabled ? "text-orange-500" : "text-muted-foreground"}`} />
+                  <span className="text-[9px] text-muted-foreground">Speak Responses</span>
                 </div>
                 <div className="flex items-center gap-2">
                   {speakEnabled && (
                     <Button 
                       variant="ghost" 
                       size="icon" 
-                      className="h-5 w-5 text-zinc-500 hover:text-orange-500"
+                      className="h-5 w-5 text-muted-foreground hover:text-orange-500"
                       onClick={() => ttsEngine.speak("Testing speech system. If you hear this, audio is working correctly.")}
                     >
                       <Volume2 className="w-3 h-3" />
@@ -233,7 +233,7 @@ export function Sidebar({
                   />
                 </div>
               </div>
-              <div className="flex justify-between text-[8px] text-zinc-600 italic px-1">
+              <div className="flex justify-between text-[8px] text-muted-foreground italic px-1">
                 <span>{speakEnabled ? "Active (Kokoro TTS)" : "Disabled (Silent)"}</span>
               </div>
             </div>
@@ -241,11 +241,11 @@ export function Sidebar({
         </section>
 
         <section className="space-y-3">
-          <div className="flex items-center gap-2 text-zinc-500">
+          <div className="flex items-center gap-2 text-muted-foreground">
             <Bot className="w-3 h-3" />
             <span className="text-[10px] font-bold uppercase tracking-widest">Features Enabled</span>
           </div>
-          <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800 grid grid-cols-2 gap-2">
+          <div className="p-3 rounded-lg bg-muted/50 border border-border grid grid-cols-2 gap-2">
             {[
               { label: "Text", active: !!selectedModels.text },
               { label: "Speech", active: speakEnabled },
@@ -253,8 +253,8 @@ export function Sidebar({
               { label: "Image", active: !!selectedModels["image-gen"] }
             ].map(feat => (
               <div key={feat.label} className="flex items-center gap-2">
-                <div className={`w-1.5 h-1.5 rounded-full ${feat.active ? "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]" : "bg-zinc-800"}`} />
-                <span className={`text-[10px] ${feat.active ? "text-zinc-300" : "text-zinc-600"}`}>{feat.label}</span>
+                <div className={`w-1.5 h-1.5 rounded-full ${feat.active ? "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]" : "bg-muted"}`} />
+                <span className={`text-[10px] ${feat.active ? "text-foreground" : "text-muted-foreground"}`}>{feat.label}</span>
               </div>
             ))}
           </div>
@@ -262,7 +262,7 @@ export function Sidebar({
 
         <section className="space-y-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-zinc-500">
+            <div className="flex items-center gap-2 text-muted-foreground">
               <History className="w-3 h-3" />
               <span className="text-[10px] font-bold uppercase tracking-widest">Console Logs</span>
             </div>
@@ -270,9 +270,9 @@ export function Sidebar({
               <Maximize2 className="w-2.5 h-2.5" />
             </Button>
           </div>
-          <div className="h-40 bg-black/40 border border-zinc-800 rounded p-2 font-mono text-[9px] overflow-y-auto space-y-1">
+          <div className="h-40 bg-black/40 border border-border rounded p-2 font-mono text-[9px] overflow-y-auto space-y-1">
             {logs.map((log, i) => (
-              <div key={i} className={`flex gap-2 ${log.type === 'error' ? 'text-red-500' : log.type === 'success' ? 'text-green-500' : 'text-zinc-500'}`}>
+              <div key={i} className={`flex gap-2 ${log.type === 'error' ? 'text-red-500' : log.type === 'success' ? 'text-green-500' : 'text-muted-foreground'}`}>
                 <span className="opacity-30 shrink-0">[{log.timestamp}]</span>
                 <span className="break-all">{log.message}</span>
               </div>

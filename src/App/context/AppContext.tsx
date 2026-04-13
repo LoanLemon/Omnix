@@ -1,5 +1,5 @@
 import React, { createContext, useContext, ReactNode } from "react";
-import { LogEntry, Message } from "../types";
+import { LogEntry, Message, ChatMode } from "../types";
 
 interface AppContextType {
   // Settings
@@ -9,10 +9,12 @@ interface AppContextType {
   setEnableRAG: (val: boolean) => void;
   speakEnabled: boolean;
   setSpeakEnabled: (val: boolean) => void;
-  chatMode: "default" | "discuss" | "edit";
-  setChatMode: (val: "default" | "discuss" | "edit") => void;
+  chatMode: ChatMode;
+  setChatMode: (val: ChatMode) => void;
   liveModeTimer: number;
   setLiveModeTimer: (val: number) => void;
+  theme: "light" | "dark";
+  setTheme: (val: "light" | "dark") => void;
 
   // Model State
   isModelLoading: boolean;

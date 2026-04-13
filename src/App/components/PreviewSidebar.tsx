@@ -19,11 +19,11 @@ export function PreviewSidebar({
   generatedImage,
 }: PreviewSidebarProps) {
   return (
-    <aside className="w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shrink-0 overflow-hidden">
-      <div className="h-10 border-b border-zinc-800 flex items-center px-4 gap-4 bg-zinc-900/50">
+    <aside className="w-[400px] border-l border-border bg-background flex flex-col shrink-0 overflow-hidden">
+      <div className="h-10 border-b border-border flex items-center px-4 gap-4 bg-muted/50">
         {sandboxFiles.length > 0 && (
           <button 
-            className={`text-[10px] font-bold uppercase tracking-widest pb-3 pt-3 border-b-2 transition-colors ${activeTab === 'sandbox' ? 'border-orange-500 text-zinc-100' : 'border-transparent text-zinc-500'}`}
+            className={`text-[10px] font-bold uppercase tracking-widest pb-3 pt-3 border-b-2 transition-colors ${activeTab === 'sandbox' ? 'border-orange-500 text-foreground' : 'border-transparent text-muted-foreground'}`}
             onClick={() => setActiveTab('sandbox')}
           >
             Sandbox
@@ -31,7 +31,7 @@ export function PreviewSidebar({
         )}
         {generatedImage && (
           <button 
-            className={`text-[10px] font-bold uppercase tracking-widest pb-3 pt-3 border-b-2 transition-colors ${activeTab === 'gallery' ? 'border-orange-500 text-zinc-100' : 'border-transparent text-zinc-500'}`}
+            className={`text-[10px] font-bold uppercase tracking-widest pb-3 pt-3 border-b-2 transition-colors ${activeTab === 'gallery' ? 'border-orange-500 text-foreground' : 'border-transparent text-muted-foreground'}`}
             onClick={() => setActiveTab('gallery')}
           >
             Gallery
@@ -44,7 +44,7 @@ export function PreviewSidebar({
           sandboxFiles.length > 0 ? (
             <Sandbox files={sandboxFiles} />
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-center space-y-4 text-zinc-600">
+            <div className="h-full flex flex-col items-center justify-center text-center space-y-4 text-muted-foreground">
               <Code2 className="w-12 h-12 opacity-20" />
               <p className="text-xs max-w-[200px]">Ask the assistant to "create a sandbox app" to see code here.</p>
             </div>
@@ -52,17 +52,17 @@ export function PreviewSidebar({
         ) : (
           <div className="space-y-4">
             {generatedImage ? (
-              <Card className="bg-zinc-900 border-zinc-800 overflow-hidden">
+              <Card className="bg-muted border-border overflow-hidden">
                 <img src={generatedImage} alt="Generated" className="w-full aspect-square object-cover" referrerPolicy="no-referrer" />
-                <CardFooter className="p-3 bg-zinc-950 flex justify-between items-center">
-                  <span className="text-[10px] text-zinc-500 font-mono">GENERATED_ASSET_01.PNG</span>
+                <CardFooter className="p-3 bg-background flex justify-between items-center">
+                  <span className="text-[10px] text-muted-foreground font-mono">GENERATED_ASSET_01.PNG</span>
                   <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => window.open(generatedImage!)}>
                     <ExternalLink className="w-3 h-3" />
                   </Button>
                 </CardFooter>
               </Card>
             ) : (
-              <div className="h-64 flex flex-col items-center justify-center text-center space-y-4 text-zinc-600 border-2 border-dashed border-zinc-800 rounded-xl">
+              <div className="h-64 flex flex-col items-center justify-center text-center space-y-4 text-muted-foreground border-2 border-dashed border-border rounded-xl">
                 <ImageIcon className="w-12 h-12 opacity-20" />
                 <p className="text-xs max-w-[200px]">Generated images will appear here.</p>
               </div>

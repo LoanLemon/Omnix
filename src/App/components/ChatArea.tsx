@@ -69,8 +69,12 @@ export function ChatArea({
     toggleLiveMode
   } = useApp();
 
+  const totalProgress = Object.values(loadingProgress).length > 0
+    ? Math.round(Object.values(loadingProgress).reduce((acc, curr) => acc + curr.progress, 0) / Object.values(loadingProgress).length)
+    : 0;
+
   return (
-    <main className="flex-1 flex flex-col bg-[#080808] relative overflow-hidden h-full">
+    <main className="flex-1 flex flex-col bg-background relative overflow-hidden h-full">
       <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]" />
       
       <div className="flex-1 overflow-hidden">
@@ -78,12 +82,12 @@ export function ChatArea({
           <div className="p-6 max-w-2xl mx-auto space-y-8">
           {messages.length === 0 && (
             <div className="py-20 text-center space-y-6">
-              <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto shadow-2xl">
+              <div className="w-16 h-16 rounded-2xl bg-muted border border-border flex items-center justify-center mx-auto shadow-2xl">
                 <Bot className="w-8 h-8 text-orange-500" />
               </div>
               <div className="space-y-2">
-                <h2 className="text-xl font-bold text-zinc-200">Local Multi-Modal Studio</h2>
-                <p className="text-sm text-zinc-500 max-w-sm mx-auto">
+                <h2 className="text-xl font-bold text-foreground">Local Multi-Modal Studio</h2>
+                <p className="text-sm text-muted-foreground max-w-sm mx-auto">
                   Orchestrate vision, speech, and image generation models locally. 
                   Try asking to "generate an image of a cat" or "analyze this picture".
                 </p>
@@ -100,18 +104,18 @@ export function ChatArea({
                 className={`flex gap-4 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
               >
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
-                  msg.role === "user" ? "bg-orange-600 border-orange-500" : "bg-zinc-900 border-zinc-800"
+                  msg.role === "user" ? "bg-orange-600 border-orange-500 text-white" : "bg-muted border-border"
                 }`}>
                   {msg.role === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
                 </div>
                 <div className={`max-w-[85%] space-y-2 ${msg.role === "user" ? "text-right ml-auto" : "mr-auto"}`}>
                   <div className={`block rounded-2xl px-4 py-2.5 text-sm leading-relaxed overflow-hidden ${
                     msg.role === "user" 
-                      ? "bg-zinc-100 text-zinc-950" 
-                      : "bg-zinc-900/50 text-zinc-200 border border-zinc-800/50 backdrop-blur-sm"
+                      ? "bg-primary text-primary-foreground" 
+                      : "bg-muted/50 text-foreground border border-border backdrop-blur-sm"
                   }`}>
                     {msg.isQueued && (
-                      <div className="flex items-center gap-2 mb-1.5 text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+                      <div className="flex items-center gap-2 mb-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         Queued for processing...
                       </div>
@@ -124,8 +128,8 @@ export function ChatArea({
                           const rest = msg.content.replace(thoughtMatch[0], "").trim();
                           return (
                             <div className="space-y-4">
-                              <div className="p-3 bg-zinc-950/50 border border-zinc-800 rounded-lg text-xs text-zinc-400 italic font-mono">
-                                <div className="flex items-center gap-2 mb-1 text-[10px] uppercase tracking-widest font-bold text-zinc-500">
+                              <div className="p-3 bg-muted/80 border border-border rounded-lg text-xs text-muted-foreground italic font-mono">
+                                <div className="flex items-center gap-2 mb-1 text-[10px] uppercase tracking-widest font-bold text-muted-foreground/70">
                                   <Sparkles className="w-3 h-3" />
                                   Reasoning
                                 </div>
@@ -139,12 +143,12 @@ export function ChatArea({
                       })()}
                     </div>
                     {msg.image && (
-                      <div className="mt-2 rounded-lg overflow-hidden border border-zinc-800 max-sm">
+                      <div className="mt-2 rounded-lg overflow-hidden border border-border max-sm">
                         <img src={msg.image} alt="Uploaded" className="w-full h-auto" referrerPolicy="no-referrer" />
                       </div>
                     )}
                     {msg.audio && (
-                      <div className="mt-2 rounded-lg overflow-hidden border border-zinc-800 bg-zinc-950 p-2">
+                      <div className="mt-2 rounded-lg overflow-hidden border border-border bg-muted p-2">
                         <audio src={msg.audio} controls className="w-full h-8" />
                       </div>
                     )}
@@ -155,7 +159,7 @@ export function ChatArea({
                             key={idx}
                             variant="outline"
                             size="sm"
-                            className="bg-zinc-950 border-zinc-800 hover:bg-zinc-800 hover:text-orange-500 text-xs rounded-xl"
+                            className="bg-muted border-border hover:bg-accent hover:text-orange-500 text-xs rounded-xl"
                             onClick={() => handleOptionSelect(opt)}
                           >
                             {opt}
@@ -168,7 +172,7 @@ export function ChatArea({
                     )}
                   </div>
                   {msg.stats && msg.role === "assistant" && (
-                    <div className="flex gap-3 text-[9px] text-zinc-600 font-mono uppercase tracking-tighter">
+                    <div className="flex gap-3 text-[9px] text-muted-foreground font-mono uppercase tracking-tighter">
                       <span>{msg.stats.tps} tps</span>
                       <span>{msg.stats.tokens} tokens</span>
                     </div>
@@ -184,15 +188,19 @@ export function ChatArea({
                 animate={{ opacity: 1, y: 0 }}
                 className="flex gap-4"
               >
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border bg-zinc-900 border-zinc-800">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border bg-muted border-border">
                   <Bot className="w-4 h-4" />
                 </div>
                 <div className="max-w-[85%] space-y-2">
-                  <div className="inline-block rounded-2xl px-4 py-2.5 text-sm leading-relaxed bg-zinc-900/50 text-zinc-200 border border-zinc-800/50 backdrop-blur-sm">
+                  <div className="inline-block rounded-2xl px-4 py-2.5 text-sm leading-relaxed bg-muted/50 text-foreground border border-border backdrop-blur-sm">
                     <div className="flex items-center gap-2 text-orange-500">
                       <Loader2 className="w-3 h-3 animate-spin" />
                       <span className="text-[10px] font-bold uppercase tracking-wider animate-pulse">
-                        {isSummarizing ? "Summarizing context..." : "Formulating response"}
+                        {isSummarizing 
+                          ? "Summarizing context..." 
+                          : isModelLoading 
+                            ? `downloading new model [${totalProgress}%]` 
+                            : "Formulating response"}
                       </span>
                     </div>
                   </div>
@@ -205,15 +213,15 @@ export function ChatArea({
     </div>
 
     {/* Input Area */}
-      <div className="p-6 border-t border-zinc-800 bg-zinc-950/50 backdrop-blur-xl shrink-0">
+      <div className="p-6 border-t border-border bg-background/50 backdrop-blur-xl shrink-0">
         <div className="max-w-2xl mx-auto relative">
           {pendingImage && (
             <div className="mb-3 relative inline-block">
-              <img src={pendingImage} className="h-20 w-20 object-cover rounded-lg border border-zinc-800" />
+              <img src={pendingImage} className="h-20 w-20 object-cover rounded-lg border border-border" />
               <button 
                 type="button"
                 onClick={() => setPendingImage(null)}
-                className="absolute -top-2 -right-2 bg-zinc-900 border border-zinc-800 rounded-full p-1 text-zinc-400 hover:text-white shadow-xl"
+                className="absolute -top-2 -right-2 bg-muted border border-border rounded-full p-1 text-muted-foreground hover:text-foreground shadow-xl"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -228,14 +236,14 @@ export function ChatArea({
                 placeholder={isModelReady ? "Command the studio..." : "Initializing engine..."}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                className="bg-zinc-900 border-zinc-800 h-12 pl-4 pr-12 focus-visible:ring-orange-500/50 rounded-xl"
+                className="bg-muted border-border h-12 pl-4 pr-12 focus-visible:ring-orange-500/50 rounded-xl"
               />
               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                 <Button
                   type="button"
                   size="icon"
                   variant="ghost"
-                  className={`h-8 w-8 rounded-lg ${isRecording && !isLiveMode ? "text-red-500 bg-red-500/10 hover:bg-red-500/20" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"}`}
+                  className={`h-8 w-8 rounded-lg ${isRecording && !isLiveMode ? "text-red-500 bg-red-500/10 hover:bg-red-500/20" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
                   onClick={toggleRecording}
                   disabled={isLiveMode}
                 >
@@ -255,7 +263,7 @@ export function ChatArea({
           
           <div className="flex items-center gap-4 mt-3 px-2">
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" className="h-7 text-[10px] text-zinc-500 hover:text-orange-500 gap-1.5" onClick={() => (document.getElementById('vision-upload') as HTMLInputElement)?.click()}>
+              <Button variant="ghost" size="sm" className="h-7 text-[10px] text-muted-foreground hover:text-orange-500 gap-1.5" onClick={() => (document.getElementById('vision-upload') as HTMLInputElement)?.click()}>
                 <ImageIcon className="w-3 h-3" />
                 Vision
               </Button>
@@ -264,7 +272,7 @@ export function ChatArea({
               <Button 
                 variant="ghost" 
                 size="sm" 
-                className={`h-7 text-[10px] gap-1.5 ${isLiveMode ? "text-red-500 hover:text-red-400 bg-red-500/10" : "text-zinc-500 hover:text-orange-500"}`} 
+                className={`h-7 text-[10px] gap-1.5 ${isLiveMode ? "text-red-500 hover:text-red-400 bg-red-500/10" : "text-muted-foreground hover:text-orange-500"}`} 
                 onClick={toggleLiveMode}
                 title="Toggle Live Mode (Screen + Voice)"
               >
@@ -275,7 +283,7 @@ export function ChatArea({
               <Button 
                 variant="ghost" 
                 size="sm" 
-                className={`h-7 text-[10px] gap-1.5 ${speakEnabled ? 'text-zinc-500 hover:text-orange-500' : 'text-zinc-700 cursor-not-allowed'}`} 
+                className={`h-7 text-[10px] gap-1.5 ${speakEnabled ? 'text-muted-foreground hover:text-orange-500' : 'text-muted-foreground/30 cursor-not-allowed'}`} 
                 title={speakEnabled ? "Speak input text" : "Enable 'Speak Responses' in sidebar to use TTS"}
                 onClick={() => speak(input)} 
                 disabled={!input.trim()}
@@ -284,23 +292,23 @@ export function ChatArea({
                 Speak
               </Button>
               
-              <Button variant="ghost" size="sm" className="h-7 text-[10px] text-zinc-500 hover:text-orange-500 gap-1.5" onClick={() => handleToolCall({tool: "image_gen", params: {prompt: input}})} disabled={!input.trim()}>
+              <Button variant="ghost" size="sm" className="h-7 text-[10px] text-muted-foreground hover:text-orange-500 gap-1.5" onClick={() => handleToolCall({tool: "image_gen", params: {prompt: input}})} disabled={!input.trim()}>
                 <Sparkles className="w-3 h-3" />
                 Generate
               </Button>
 
-              <Button variant="ghost" size="sm" className="h-7 text-[10px] text-zinc-500 hover:text-orange-500 gap-1.5" onClick={() => handleMusicGen(input)} disabled={!input.trim()}>
+              <Button variant="ghost" size="sm" className="h-7 text-[10px] text-muted-foreground hover:text-orange-500 gap-1.5" onClick={() => handleMusicGen(input)} disabled={!input.trim()}>
                 <Music className="w-3 h-3" />
                 Music
               </Button>
             </div>
-            <Separator orientation="vertical" className="h-3 bg-zinc-800" />
+            <Separator orientation="vertical" className="h-3 bg-border" />
             <div className="flex gap-2">
               {sandboxFiles.length > 0 && (
                 <Button 
                   variant="ghost" 
                   size="sm" 
-                  className={`h-7 text-[10px] gap-1.5 ${activeTab === 'sandbox' ? 'text-orange-500' : 'text-zinc-500'}`}
+                  className={`h-7 text-[10px] gap-1.5 ${activeTab === 'sandbox' ? 'text-orange-500' : 'text-muted-foreground'}`}
                   onClick={() => setActiveTab('sandbox')}
                 >
                   <Code2 className="w-3 h-3" />
@@ -311,7 +319,7 @@ export function ChatArea({
                 <Button 
                   variant="ghost" 
                   size="sm" 
-                  className={`h-7 text-[10px] gap-1.5 ${activeTab === 'gallery' ? 'text-orange-500' : 'text-zinc-500'}`}
+                  className={`h-7 text-[10px] gap-1.5 ${activeTab === 'gallery' ? 'text-orange-500' : 'text-muted-foreground'}`}
                   onClick={() => setActiveTab('gallery')}
                 >
                   <Layout className="w-3 h-3" />

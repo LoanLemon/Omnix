@@ -1,3 +1,5 @@
+export type ChatMode = "director" | "text" | "image" | "music" | "sandbox" | "live";
+
 export interface SandboxFile {
   name: string;
   content: string;

@@ -53,11 +53,17 @@ Answer questions, have conversations, roleplay, or do anything else the user req
 
 export const getModePrompt = (chatMode: string) => {
   switch (chatMode) {
-    case "discuss":
-      return "In DISCUSS mode, you should focus on brainstorming and planning. Do NOT output JSON tool calls unless explicitly asked to switch to execution.";
-    case "edit":
-      return "In EDIT mode, focus on modifying the specific code provided in the context.";
+    case "text":
+      return "In TEXT mode, you should focus on providing high-quality text responses. Do NOT attempt to generate images or music.";
+    case "image":
+      return "In IMAGE mode, you are specialized in generating visual descriptions for image generation tools.";
+    case "music":
+      return "In MUSIC mode, you are specialized in generating prompts for music generation tools.";
+    case "sandbox":
+      return "In SANDBOX mode, you are a full-stack developer. Focus on writing and modifying code in the sandbox.";
+    case "live":
+      return "In LIVE mode, you are observing the user's screen and listening to their voice in real-time. Be concise and helpful.";
     default:
-      return "For general conversation, greetings, or questions, respond normally without asking for a mode.";
+      return "In DIRECTOR mode, you are the orchestrator. Route the user's request to the appropriate tool (image_gen, music_gen, sandbox, or route_to_text).";
   }
 };

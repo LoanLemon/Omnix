@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { ChatMode } from "../types";
 
 export function useSettings() {
   const [ramLimitPercent, setRamLimitPercent] = useState<number>(() => {
@@ -16,14 +17,20 @@ export function useSettings() {
     return saved === "true";
   });
 
-  const [chatMode, setChatMode] = useState<"default" | "discuss" | "edit">(() => {
+  const [chatMode, setChatMode] = useState<ChatMode>(() => {
     const saved = localStorage.getItem("omnix_chat_mode");
-    return (saved as any) || "default";
+    return (saved as ChatMode) || "director";
   });
 
   const [liveModeTimer, setLiveModeTimer] = useState<number>(() => {
     const saved = localStorage.getItem("omnix_live_mode_timer");
     return saved ? parseInt(saved, 10) : 15;
+  });
+
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("omnix_theme");
+    if (saved) return saved as "light" | "dark";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
 
   useEffect(() => {
@@ -46,6 +53,15 @@ export function useSettings() {
     localStorage.setItem("omnix_live_mode_timer", liveModeTimer.toString());
   }, [liveModeTimer]);
 
+  useEffect(() => {
+    localStorage.setItem("omnix_theme", theme);
+    if (theme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [theme]);
+
   return {
     ramLimitPercent,
     setRamLimitPercent,
@@ -57,5 +73,7 @@ export function useSettings() {
     setChatMode,
     liveModeTimer,
     setLiveModeTimer,
+    theme,
+    setTheme,
   };
 }

@@ -80,7 +80,9 @@ export default function App() {
     chatMode,
     setChatMode,
     liveModeTimer,
-    setLiveModeTimer
+    setLiveModeTimer,
+    theme,
+    setTheme,
   } = useSettings();
 
   // --- State ---
@@ -322,7 +324,20 @@ export default function App() {
 
   useEffect(() => {
     isLiveModeRef.current = isLiveMode;
-  }, [isLiveMode]);
+    if (isLiveMode && chatMode !== "live") {
+      setChatMode("live");
+    } else if (!isLiveMode && chatMode === "live") {
+      setChatMode("director");
+    }
+  }, [isLiveMode, chatMode, setChatMode]);
+
+  useEffect(() => {
+    if (isCoderMode && chatMode !== "sandbox") {
+      setChatMode("sandbox");
+    } else if (!isCoderMode && chatMode === "sandbox") {
+      setChatMode("director");
+    }
+  }, [isCoderMode, chatMode, setChatMode]);
 
   const handleEmbedResult = async (embedding: number[], text: string, metadata?: any) => {
     if (metadata?.type === "archive") {
@@ -1140,6 +1155,8 @@ ${context}
     setChatMode,
     liveModeTimer,
     setLiveModeTimer,
+    theme,
+    setTheme,
     isModelLoading,
     isModelReady,
     loadingProgress,

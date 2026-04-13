@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, MutableRefObject } from "react";
-import { Message } from "../types";
+import { Message, ChatMode } from "../types";
 import { memoryStore } from "../../lib/memory";
 import { tts } from "../../lib/tts";
 import { MODELS } from "../../modelList";
@@ -8,7 +8,7 @@ import { TEXT_SYSTEM_PROMPT, CODER_SYSTEM_PROMPT, DIRECTOR_SYSTEM_PROMPT, getMod
 
 export function useChatLogic(
   worker: MutableRefObject<Worker | null>,
-  chatMode: "default" | "discuss" | "edit",
+  chatMode: ChatMode,
   enableRAG: boolean,
   loadedModelId: string | null,
   selectedModels: Record<string, string>,
@@ -234,12 +234,32 @@ export function useChatLogic(
       return;
     }
 
-    if (isCoderMode || isLiveModeRef?.current) {
+    if (chatMode === "text") {
       setTextModelQueue(prev => [...prev, { text: userInput }]);
       return;
     }
 
-    // Route through director model
+    if (chatMode === "image") {
+      setImageModelQueue(prev => [...prev, { prompt: userInput }]);
+      return;
+    }
+
+    if (chatMode === "music") {
+      setMusicModelQueue(prev => [...prev, { prompt: userInput }]);
+      return;
+    }
+
+    if (chatMode === "sandbox" || isCoderMode) {
+      setTextModelQueue(prev => [...prev, { text: userInput }]);
+      return;
+    }
+
+    if (chatMode === "live" || isLiveModeRef?.current) {
+      setTextModelQueue(prev => [...prev, { text: userInput }]);
+      return;
+    }
+
+    // Route through director model (Auto)
     addLog("Routing through director model...", "info");
     setDirectorModelQueue(prev => [...prev, { text: userInput }]);
   }, [input, enableRAG, loadedModelId, loadModel, checkAndEvictContext, addLog, worker, handleSendInternal, resetSpeech, isCoderMode, activeCategory, isLiveModeRef]);
