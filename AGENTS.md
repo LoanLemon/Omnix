@@ -1,4 +1,4 @@
-# Base44 Agentic AI Architecture Instructions
+# AI Architecture Instructions
 
 When the user is requesting to create an app or website, prompt the user if they want raw code, or the request completed in sandbox mode.
 
