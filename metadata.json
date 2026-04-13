@@ -1,0 +1,8 @@
+{
+  "name": "Omnix (Local AI)",
+  "description": "A web application to run Hugging Face models directly in the browser using Transformers.js and WebGPU. ",
+  "requestFramePermissions": [
+    "display-capture",
+    "microphone"
+  ]
+}
