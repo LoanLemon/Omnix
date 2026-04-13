@@ -1,11 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electron', {
-  isElectron: true,
   fs: {
-    readDir: (path) => ipcRenderer.invoke('fs:readDir', path),
-    readFile: (path) => ipcRenderer.invoke('fs:readFile', path),
-    writeFile: (path, content) => ipcRenderer.invoke('fs:writeFile', path, content),
+    readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),
+    readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
+    writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', filePath, content),
+  },
+  os: {
+    getMemoryStats: () => ipcRenderer.invoke('os:getMemoryStats')
   },
   dialog: {
     openFile: () => ipcRenderer.invoke('dialog:openFile'),

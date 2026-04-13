@@ -12,9 +12,26 @@ export function useSystemStats(addLog: (msg: string, type?: "info" | "error" | "
     setIsElectron(isElectronEnv);
 
     if (isElectronEnv) {
-      setSystemRam(64); // "Unrestricted" for Electron
-      setIsRamDetected(true);
-      addLog("Electron environment detected. RAM limits unrestricted.", "success");
+      (window as any).electron.os.getMemoryStats().then((stats: any) => {
+        setSystemRam(stats.totalGB);
+        setIsRamDetected(true);
+        addLog(`Electron detected. Physical RAM: ${stats.totalGB}GB. V8 Limits Unrestricted.`, "success");
+      });
+
+      const memoryInterval = setInterval(async () => {
+        try {
+          const stats = await (window as any).electron.os.getMemoryStats();
+          setHeapUsage({
+            used: stats.usedMB,
+            limit: stats.totalMB
+          });
+        } catch (e) {
+          console.error("Failed to fetch OS memory stats");
+        }
+      }, 2000);
+
+      return () => clearInterval(memoryInterval);
+
     } else if ("deviceMemory" in navigator) {
       const detectedRam = (navigator as any).deviceMemory;
       const ua = navigator.userAgent;
