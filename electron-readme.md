@@ -11,13 +11,14 @@ This guide will help you set up and run the desktop version of Omnix using Elect
 
 1. **Clone the repository** (if you haven't already):
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/LoanLemon/Omnix
    cd omnix
    ```
 
 2. **Install dependencies**:
    ```bash
    npm install
+   npm install concurrently wait-on --save-dev
    ```
 
 ## Running the Application

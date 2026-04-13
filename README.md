@@ -69,12 +69,13 @@ The desktop version of Omnix provides unrestricted RAM access, WebGPU accelerati
 ### Installation
 1. **Clone the repository**:
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/LoanLemon/Omnix
    cd omnix
    ```
 2. **Install dependencies**:
    ```bash
    npm install
+   npm install concurrently wait-on --save-dev
    ```
 
 ### Running the Application
@@ -108,7 +109,6 @@ The desktop version of Omnix provides unrestricted RAM access, WebGPU accelerati
 ### Troubleshooting
 - **WebGPU Errors**: Ensure your graphics drivers are up to date. Some older GPUs may not support WebGPU.
 - **Port Conflicts**: If port 3000 is occupied, the Electron app may fail to connect in dev mode.
-- **Tray Icon**: Ensure you have a valid `icon.png` in the `electron/` directory.
 
 ---
 
