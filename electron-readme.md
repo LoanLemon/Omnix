@@ -18,7 +18,6 @@ This guide will help you set up and run the desktop version of Omnix using Elect
 2. **Install dependencies**:
    ```bash
    npm install
-   npm install concurrently wait-on --save-dev
    ```
 
 ## Running the Application
@@ -28,26 +27,16 @@ To run the app in development mode with hot-reloading:
 
 1. **Start the Vite development server**:
    ```bash
-   npm run dev
-   ```
-
-2. **In a separate terminal, launch Electron**:
-   ```bash
-   npm run electron:dev
+   npm run start
    ```
 
 ### Production Build
 To package the application for production:
 
-1. **Build the frontend**:
-   ```bash
-   npm run build
-   ```
-
-2. **Run Electron against the production build**:
+1. **Build the app**:
    ```bash
    # Note: You may need to install electron-builder or electron-packager for full distribution
-   npx electron .
+   npm run electron:build
    ```
 
 ## Desktop Features

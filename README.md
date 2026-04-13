@@ -61,43 +61,43 @@ curl -X POST http://localhost:3000/api/text \
 ## Electron Setup Guide
 
 The desktop version of Omnix provides unrestricted RAM access, WebGPU acceleration, and native filesystem integration.
+### Precompiled
+
 
 ### Prerequisites
 - **Node.js**: v18 or higher recommended.
 - **NPM**: Standard package manager.
 
-### Installation
-1. **Clone the repository**:
+## Installation
+
+1. **Clone the repository** (if you haven't already):
    ```bash
    git clone https://github.com/LoanLemon/Omnix
    cd omnix
    ```
+
 2. **Install dependencies**:
    ```bash
    npm install
-   npm install concurrently wait-on --save-dev
    ```
 
-### Running the Application
+## Running the Application
 
-#### Development Mode
+### Development Mode
+To run the app in development mode with hot-reloading:
+
 1. **Start the Vite development server**:
    ```bash
-   npm run dev
-   ```
-2. **In a separate terminal, launch Electron**:
-   ```bash
-   npm run electron:dev
+   npm run start
    ```
 
-#### Production Build
-1. **Build the frontend**:
+### Production Build
+To package the application for production:
+
+1. **Build the app**:
    ```bash
-   npm run build
-   ```
-2. **Run Electron**:
-   ```bash
-   npx electron .
+   # Note: You may need to install electron-builder or electron-packager for full distribution
+   npm run electron:build
    ```
 
 ### Desktop Features

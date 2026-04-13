@@ -85,7 +85,7 @@ function createTray() {
 // In main.js
 
 function startInternalServer() {
-  const serverPath = path.join(__dirname, '../server.ts');
+  const serverPath = path.join(__dirname, '../server.js');
   
   // Use tsx to run the .ts file in development
   // In production, you would typically bundle this to .js

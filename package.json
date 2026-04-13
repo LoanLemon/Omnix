@@ -12,7 +12,7 @@
     "start": "concurrently -k \"npm run dev\" \"npm run electron:dev\"",
     "build:ui": "vite build",
     "build:server": "tsc server.ts --outDir . --module esnext --target esnext --moduleResolution bundler --allowJs --skipLibCheck",
-    "electron:build": "npm run build:ui && npm run build:server && electron-builder",
+    "electron:build": "npm run build:ui && npm run build:server && npx electron-builder",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
