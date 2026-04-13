@@ -11,6 +11,52 @@ const __dirname = path.dirname(__filename);
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+// --- PROXY ARCHITECTURE FOR ELECTRON ---
+const pendingRequests = new Map<string, any>();
+
+if (process.send) {
+  process.on('message', (msg: any) => {
+    if (msg.type === 'api-inference-response') {
+      const res = pendingRequests.get(msg.requestId);
+      if (res) {
+        res.json(msg.response);
+        pendingRequests.delete(msg.requestId);
+      }
+    }
+  });
+}
+
+async function requestInference(category: string, prompt: string, extraData: any = {}) {
+  return new Promise((resolve, reject) => {
+    const requestId = Math.random().toString(36).substring(7);
+    
+    // Timeout after 60 seconds
+    const timeout = setTimeout(() => {
+      if (pendingRequests.has(requestId)) {
+        pendingRequests.delete(requestId);
+        reject(new Error("Inference request timed out"));
+      }
+    }, 60000);
+
+    pendingRequests.set(requestId, {
+      json: (data: any) => {
+        clearTimeout(timeout);
+        resolve(data);
+      }
+    });
+
+    if (process.send) {
+      process.send({
+        type: 'api-inference-request',
+        data: { requestId, prompt, category, ...extraData }
+      });
+    } else {
+      reject(new Error("Not running in Electron proxy mode"));
+    }
+  });
+}
+// ----------------------------------------
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -50,6 +96,11 @@ async function startServer() {
       const { prompt, systemPrompt } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
+      if (process.send) {
+        const result: any = await requestInference("text", prompt, { systemPrompt });
+        return res.json(result);
+      }
+
       const generator = await getTextPipeline();
       const messages = [
         { role: "system", content: systemPrompt || "You are Omnix, a helpful AI assistant." },
@@ -68,6 +119,13 @@ async function startServer() {
       const { prompt } = req.body;
       const file = req.file;
       if (!file) return res.status(400).json({ error: "Image is required" });
+
+      if (process.send) {
+        // Convert buffer to base64 for IPC
+        const base64Image = file.buffer.toString('base64');
+        const result: any = await requestInference("vision", prompt || "Describe this image", { image: base64Image });
+        return res.json(result);
+      }
 
       const captioner = await getVisionPipeline();
       const imageBuffer = file.buffer;
@@ -97,6 +155,11 @@ async function startServer() {
     try {
       const { prompt } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
+
+      if (process.send) {
+        const result: any = await requestInference("director", prompt);
+        return res.json(result);
+      }
 
       const generator = await getTextPipeline();
       const directorPrompt = `Identify the users intent.
@@ -162,6 +225,12 @@ No other outputs are valid.`;
       const file = req.file;
       if (!file) return res.status(400).json({ error: "Audio file is required" });
 
+      if (process.send) {
+        const base64Audio = file.buffer.toString('base64');
+        const result: any = await requestInference("stt", "transcribe", { audio: base64Audio });
+        return res.json(result);
+      }
+
       const transcriber = await getSTTPipeline();
       
       // Convert buffer to Float32Array for Whisper
@@ -180,6 +249,11 @@ No other outputs are valid.`;
     try {
       const { text, voice } = req.body;
       if (!text) return res.status(400).json({ error: "Text is required" });
+
+      if (process.send) {
+        const result: any = await requestInference("tts", text, { voice });
+        return res.json(result);
+      }
 
       // Simulated TTS generation
       // In a real scenario, we'd use a TTS pipeline and return a buffer or URL

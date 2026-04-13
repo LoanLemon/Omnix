@@ -4,7 +4,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import isDev from 'electron-is-dev';
 import fs from 'fs/promises';
+import { fork } from 'child_process';
 
+let serverProcess;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -29,76 +31,101 @@ function getSafePath(requestedPath) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1200, height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'), 
       nodeIntegration: false,
       contextIsolation: true,
-      // Enable WebGPU
-      enableBlinkFeatures: 'WebGPU',
+      sandbox: false,
     },
     backgroundColor: '#080808',
     show: false,
   });
 
   const startURL = isDev 
-    ? 'http://localhost:3000' 
+    ? 'http://127.0.0.1:3000' 
     : `file://${path.join(__dirname, '../dist/index.html')}`;
 
   mainWindow.loadURL(startURL);
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+  mainWindow.webContents.on('did-finish-load', () => {
+     mainWindow.show();
+     if (isDev) mainWindow.webContents.openDevTools();
   });
 
-  mainWindow.on('minimize', (event) => {
-    event.preventDefault();
-    mainWindow.hide();
-  });
-
+  // --- PERSISTENCE LOGIC ---
   mainWindow.on('close', (event) => {
     if (!app.isQuitting) {
-      event.preventDefault();
-      mainWindow.hide();
+      event.preventDefault(); // Stop the app from quitting
+      mainWindow.hide();      // Just hide the window
     }
     return false;
   });
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'icon.png');
+  // NOTE: Ensure icon.png exists in the electron/ folder or this will error
+  const iconPath = path.join(__dirname, 'icon.png'); 
   tray = new Tray(iconPath);
+  
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show App', click: () => mainWindow.show() },
-    { label: 'Quit', click: () => {
-      app.isQuitting = true;
+    { label: 'Show Omnix Studio', click: () => mainWindow.show() },
+    { type: 'separator' },
+    { label: 'Quit Omnix (Stop API)', click: () => {
+      app.isQuitting = true; // Set flag so the 'close' event allows it
       app.quit();
     }}
   ]);
 
-  tray.setToolTip('Omnix');
+  tray.setToolTip('Omnix AI Studio');
   tray.setContextMenu(contextMenu);
+  tray.on('click', () => mainWindow.show());
+}
 
-  tray.on('click', () => {
-    mainWindow.isVisible() ? mainWindow.hide() : mainWindow.show();
+// In main.js
+
+function startInternalServer() {
+  const serverPath = path.join(__dirname, '../server.ts');
+  
+  // Use tsx to run the .ts file in development
+  // In production, you would typically bundle this to .js
+  serverProcess = fork(serverPath, [], {
+    execArgv: isDev ? ['--import', 'tsx'] : []
+  });
+  
+  serverProcess.on('message', async (request) => {
+    if (request.type === 'api-inference-request') {
+      mainWindow.webContents.send('execute-inference', request.data);
+    }
   });
 }
+
+ipcMain.on('inference-result', (event, { requestId, response }) => {
+  serverProcess.send({ type: 'api-inference-response', requestId, response });
+});
 
 // Unrestricted RAM flags
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=16384');
 app.commandLine.appendSwitch('enable-unsafe-webgpu');
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Ensure the workspace is ready BEFORE the window opens
+  await fs.mkdir(WORKSPACE_DIR, { recursive: true }).catch(console.error);
+  startInternalServer();
   createWindow();
+  createTray(); // <--- You were missing this call
   
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
+app.on('before-quit', () => {
+  if (serverProcess) serverProcess.kill(); // Clean up when the user actually QUITS
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+	
 });
 
 ipcMain.handle('os:getMemoryStats', () => {

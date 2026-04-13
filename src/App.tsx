@@ -98,6 +98,7 @@ export default function App() {
   const [sandboxFiles, setSandboxFiles] = useState<SandboxFile[]>([]);
   const [activeTab, setActiveTab] = useState<"chat" | "sandbox" | "gallery">("chat");
   const [isCoderMode, setIsCoderMode] = useState(false);
+
   const [previousTextModel, setPreviousTextModel] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
 
@@ -136,6 +137,82 @@ export default function App() {
       { timestamp: new Date().toLocaleTimeString(), message, type },
     ].slice(-50));
   }, []);
+
+  // --- Electron API Proxy ---
+  useEffect(() => {
+    if (window.electron) {
+      window.electron.onInferenceRequest(async (data: any) => {
+        const { requestId, category, prompt, ...extra } = data;
+        addLog(`API Request [${category}]: ${prompt.substring(0, 50)}...`, "info");
+
+        if (!worker.current) {
+          window.electron.sendInferenceResult(requestId, { error: "Worker not initialized" });
+          return;
+        }
+
+        switch (category) {
+          case "text":
+            worker.current.postMessage({
+              type: "generate",
+              data: { text: prompt, systemPrompt: extra.systemPrompt, requestId }
+            });
+            break;
+          case "vision":
+            // Convert base64 back to blob URL for worker
+            const visionBlob = await fetch(`data:image/jpeg;base64,${extra.image}`).then(r => r.blob());
+            const visionUrl = URL.createObjectURL(visionBlob);
+            worker.current.postMessage({
+              type: "vision-analyze",
+              data: { image: visionUrl, prompt, requestId }
+            });
+            break;
+          case "director":
+            worker.current.postMessage({
+              type: "generate",
+              data: { text: prompt, systemPrompt: DIRECTOR_SYSTEM_PROMPT, requestId }
+            });
+            break;
+          case "image":
+            worker.current.postMessage({
+              type: "image-generate",
+              data: { prompt, requestId }
+            });
+            break;
+          case "music":
+            worker.current.postMessage({
+              type: "music-generate",
+              data: { prompt, requestId }
+            });
+            break;
+          case "stt":
+            try {
+              const sttBlob = await fetch(`data:audio/wav;base64,${extra.audio}`).then(r => r.blob());
+              const sttArrayBuffer = await sttBlob.arrayBuffer();
+              const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+              const decodedBuffer = await audioCtx.decodeAudioData(sttArrayBuffer);
+              const pcmData = decodedBuffer.getChannelData(0);
+              worker.current.postMessage({
+                type: "transcribe",
+                data: { audio: pcmData, requestId }
+              });
+              audioCtx.close();
+            } catch (err: any) {
+              window.electron.sendInferenceResult(requestId, { error: "Failed to decode audio: " + err.message });
+            }
+            break;
+          case "tts":
+            worker.current.postMessage({
+              type: "tts-generate",
+              data: { text: prompt, requestId }
+            });
+            break;
+          default:
+            window.electron.sendInferenceResult(requestId, { error: "Unknown category" });
+        }
+      });
+    }
+  }, [addLog]);
+  // ---------------------------
 
   // --- Hooks ---
   const { 
@@ -470,13 +547,13 @@ ${context}
           setLoadedModelId(data.model);
           addLog(`${(data.category || "model").toUpperCase()} model ready!`, "success");
           setLoadingProgress({});
-
-          if (activeCategoryRef.current === "vision" && data.category === "vision") {
-            // Processing handled by queue effect
-          }
           break;
         case "vision-result":
           setIsAnalyzing(false);
+          if (data.requestId && window.electron) {
+            window.electron.sendInferenceResult(data.requestId, { caption: data.output });
+            break;
+          }
           if (!didErrorRef.current) {
             addLog("Vision analysis complete. Queuing for text model...", "success");
             addLog(`Vision Output: ${data.output}`, "info");
@@ -491,11 +568,21 @@ ${context}
           break;
         case "tts-result":
           setIsGenerating(false);
+          if (data.requestId && window.electron) {
+            // For API, we might want to return a URL or base64
+            // For now, let's just return success
+            window.electron.sendInferenceResult(data.requestId, { status: "success", message: "Speech generated" });
+            break;
+          }
           playAudio(data.audio, data.sampling_rate);
           addLog("Speech generated and playing", "success");
           break;
         case "music-result":
           setIsGenerating(false);
+          if (data.requestId && window.electron) {
+            window.electron.sendInferenceResult(data.requestId, { status: "success", message: "Music generated" });
+            break;
+          }
           playAudio(data.audio, data.sampling_rate);
           addLog("Music generated and playing", "success");
           
@@ -516,6 +603,10 @@ ${context}
           break;
         case "image-result":
           setIsGenerating(false);
+          if (data.requestId && window.electron) {
+            window.electron.sendInferenceResult(data.requestId, { status: "success", image: data.image });
+            break;
+          }
           handleImageResult(data.image);
           addLog("Image generated", "success");
           if (!isCoderMode && imageModelQueueRef.current.length === 0 && !isLiveModeRef.current) {
@@ -524,6 +615,10 @@ ${context}
           }
           break;
         case "transcribe-result":
+          if (data.requestId && window.electron) {
+            window.electron.sendInferenceResult(data.requestId, { text: data.text });
+            break;
+          }
           if (data.isLive) {
             const { text, messageId, screenshot } = data;
             const speechText = text?.trim();
@@ -553,9 +648,17 @@ ${context}
           handleAssistantUpdateRef.current?.(data.output, data.stats);
           break;
         case "complete":
+          if (data.requestId && window.electron) {
+            window.electron.sendInferenceResult(data.requestId, { response: data.output });
+            break;
+          }
           handleAssistantCompleteRef.current?.(data.output);
           break;
         case "error":
+          if (data.requestId && window.electron) {
+            window.electron.sendInferenceResult(data.requestId, { error: data.message });
+            break;
+          }
           setIsModelLoading(false);
           setIsGenerating(false);
           setIsAnalyzing(false);

@@ -3,9 +3,9 @@ import { analyzeLFM } from "../workerFuncs/analyzeLFM";
 import { RawImage } from "./state";
 
 export async function handleGenerate(data: any) {
-  const { text, messages, max_new_tokens = 256 } = data;
+  const { text, messages, max_new_tokens = 256, requestId } = data;
   if (!state.generator && !state.model) {
-    self.postMessage({ type: "error", data: { message: "Model not loaded" } });
+    self.postMessage({ type: "error", data: { message: "Model not loaded", requestId } });
     return;
   }
 
@@ -68,7 +68,7 @@ export async function handleGenerate(data: any) {
       const inputTokenCount = inputs.input_ids.dims.at(-1);
       const newTokens = outputs.slice(null, [inputTokenCount, null]);
       const decoded = state.processor.batch_decode(newTokens, { skip_special_tokens: true });
-      self.postMessage({ type: "complete", data: { output: decoded[0].trim() } });
+      self.postMessage({ type: "complete", data: { output: decoded[0].trim(), requestId } });
 
     } else if (state.generator) {
       const tokenizer = state.generator.tokenizer;
@@ -117,7 +117,7 @@ export async function handleGenerate(data: any) {
         else if (Array.isArray(result)) resultText = result[result.length - 1].content || JSON.stringify(result[result.length - 1]);
         else if (result && typeof result === 'object') resultText = (result as any).content || JSON.stringify(result);
       }
-      self.postMessage({ type: "complete", data: { output: resultText.trim() } });
+      self.postMessage({ type: "complete", data: { output: resultText.trim(), requestId } });
     } else if (state.model && state.processor) {
       const chatMessages = Array.isArray(rawInput) ? rawInput : [{ role: "user", content: rawInput }];
       const formattedPrompt = state.processor.apply_chat_template(chatMessages, { add_generation_prompt: true });
@@ -142,28 +142,28 @@ export async function handleGenerate(data: any) {
       });
 
       const decoded = state.processor.batch_decode(outputs, { skip_special_tokens: true });
-      self.postMessage({ type: "complete", data: { output: decoded[0].trim() } });
+      self.postMessage({ type: "complete", data: { output: decoded[0].trim(), requestId } });
     }
   } catch (error: any) {
-    self.postMessage({ type: "error", data: { message: error.message } });
+    self.postMessage({ type: "error", data: { message: error.message, requestId } });
   }
 }
 
 export async function handleVisionAnalyze(data: any) {
-  const { image, prompt } = data;
+  const { image, prompt, requestId } = data;
   if (!state.generator && !state.model && !state.lfmSessions) {
-    self.postMessage({ type: "error", data: { message: "Vision model not loaded" } });
+    self.postMessage({ type: "error", data: { message: "Vision model not loaded", requestId } });
     return;
   }
 
   try {
     self.postMessage({ type: "status", data: { message: "Analyzing image..." } });
     if (state.isLFM && state.lfmSessions && state.lfmTokenizer) {
-      const finalOutput = await analyzeLFM(image, prompt, state.lfmSessions, state.lfmTokenizer, state.lfmProcessor, state.isInterrupted, (msg) => self.postMessage(msg));
-      self.postMessage({ type: "vision-result", data: { output: finalOutput, prompt } });
+      const finalOutput = await analyzeLFM(image, prompt, state.lfmSessions, state.lfmTokenizer, state.lfmProcessor, state.isInterrupted, (msg) => self.postMessage({ ...msg, requestId }));
+      self.postMessage({ type: "vision-result", data: { output: finalOutput, prompt, requestId } });
     } else if (state.generator) {
       const output = await state.generator(image, prompt);
-      self.postMessage({ type: "vision-result", data: { output: output[0].generated_text, prompt } });
+      self.postMessage({ type: "vision-result", data: { output: output[0].generated_text, prompt, requestId } });
     } else if (state.model && state.processor) {
       let inputs;
       let formattedPrompt = "";
@@ -200,17 +200,17 @@ export async function handleVisionAnalyze(data: any) {
         result = decoded[0];
         if (formattedPrompt && result.includes(formattedPrompt)) result = result.replace(formattedPrompt, "").trim();
       }
-      self.postMessage({ type: "vision-result", data: { output: result, prompt } });
+      self.postMessage({ type: "vision-result", data: { output: result, prompt, requestId } });
     }
   } catch (error: any) {
-    self.postMessage({ type: "error", data: { message: error.message } });
+    self.postMessage({ type: "error", data: { message: error.message, requestId } });
   }
 }
 
 export async function handleImageGenerate(data: any) {
-  const { prompt } = data;
+  const { prompt, requestId } = data;
   if (!state.generator && !state.model) {
-    self.postMessage({ type: "error", data: { message: "Image generation model not loaded" } });
+    self.postMessage({ type: "error", data: { message: "Image generation model not loaded", requestId } });
     return;
   }
   try {
@@ -226,54 +226,54 @@ export async function handleImageGenerate(data: any) {
       const output = await state.generator(prompt);
       image = output.images ? output.images[0] : (Array.isArray(output) ? output[0] : output);
     }
-    self.postMessage({ type: "image-result", data: { image } });
+    self.postMessage({ type: "image-result", data: { image, requestId } });
   } catch (error: any) {
-    self.postMessage({ type: "error", data: { message: error.message } });
+    self.postMessage({ type: "error", data: { message: error.message, requestId } });
   }
 }
 
 export async function handleMusicGenerate(data: any) {
-  const { prompt, max_new_tokens = 500 } = data;
+  const { prompt, max_new_tokens = 500, requestId } = data;
   if (!state.model || !state.processor) {
-    self.postMessage({ type: "error", data: { message: "MusicGen model not loaded" } });
+    self.postMessage({ type: "error", data: { message: "MusicGen model not loaded", requestId } });
     return;
   }
   try {
-    self.postMessage({ type: "status", data: { message: "Generating music..." } });
+    self.postMessage({ type: "status", data: { message: "Generating music...", requestId } });
     const inputs = state.processor(prompt);
     const audio_values = await state.model.generate({ ...inputs, max_new_tokens, do_sample: true, guidance_scale: 3 });
-    self.postMessage({ type: "music-result", data: { audio: audio_values.data, sampling_rate: state.model.config.audio_encoder.sampling_rate } });
+    self.postMessage({ type: "music-result", data: { audio: audio_values.data, sampling_rate: state.model.config.audio_encoder.sampling_rate, requestId } });
   } catch (error: any) {
-    self.postMessage({ type: "error", data: { message: error.message } });
+    self.postMessage({ type: "error", data: { message: error.message, requestId } });
   }
 }
 
 export async function handleTTSGenerate(data: any) {
-  const { text } = data;
+  const { text, requestId } = data;
   if (!state.generator) {
-    self.postMessage({ type: "error", data: { message: "TTS model not loaded" } });
+    self.postMessage({ type: "error", data: { message: "TTS model not loaded", requestId } });
     return;
   }
   try {
-    self.postMessage({ type: "status", data: { message: "Generating speech..." } });
+    self.postMessage({ type: "status", data: { message: "Generating speech...", requestId } });
     const output = await state.generator(text);
-    self.postMessage({ type: "tts-result", data: { audio: output.audio, sampling_rate: output.sampling_rate } });
+    self.postMessage({ type: "tts-result", data: { audio: output.audio, sampling_rate: output.sampling_rate, requestId } });
   } catch (error: any) {
-    self.postMessage({ type: "error", data: { message: error.message } });
+    self.postMessage({ type: "error", data: { message: error.message, requestId } });
   }
 }
 
 export async function handleTranscribe(data: any) {
+  const { audio, requestId, ...metadata } = data;
   if (!state.generator) {
-    self.postMessage({ type: "error", data: { message: "Transcription model not loaded" } });
+    self.postMessage({ type: "error", data: { message: "Transcription model not loaded", requestId } });
     return;
   }
   try {
-    const { audio, ...metadata } = data;
     const output = await state.generator(audio);
-    self.postMessage({ type: "transcribe-result", data: { text: output.text, ...metadata } });
+    self.postMessage({ type: "transcribe-result", data: { text: output.text, requestId, ...metadata } });
   } catch (error: any) {
-    self.postMessage({ type: "error", data: { message: error.message } });
+    self.postMessage({ type: "error", data: { message: error.message, requestId } });
   }
 }
 

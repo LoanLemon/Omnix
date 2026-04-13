@@ -43,3 +43,23 @@ export interface ModelInfo {
   minRam?: number;
   make?: string;
 }
+
+declare global {
+  interface Window {
+    electron?: {
+      fs: {
+        readDir: (dirPath: string) => Promise<any>;
+        readFile: (filePath: string) => Promise<any>;
+        writeFile: (filePath: string, content: string) => Promise<any>;
+      };
+      os: {
+        getMemoryStats: () => Promise<any>;
+      };
+      dialog: {
+        openFile: () => Promise<any>;
+      };
+      onInferenceRequest: (callback: (data: any) => void) => void;
+      sendInferenceResult: (requestId: string, response: any) => void;
+    };
+  }
+}
