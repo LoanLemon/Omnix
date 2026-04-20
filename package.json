@@ -1,76 +1,23 @@
 {
   "name": "omnix",
-  "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "main": "electron/main.js",
-  "author": "LemOne Labs/Dustin Lee",
-  "description": "Local AI Workstation. Multi-modal capabilities (TTS, Image, Vision, Music) using WebGPU/WASM.",
-  "scripts": {
-    "dev": "tsx server.ts",
-    "electron:dev": "wait-on tcp:3000 && electron .",
-    "start": "concurrently -k \"npm run dev\" \"npm run electron:dev\"",
-    "build:ui": "vite build",
-    "build:server": "tsc server.ts --outDir . --module esnext --target esnext --moduleResolution bundler --allowJs --skipLibCheck",
-    "electron:build": "npm run build:ui && npm run build:server && npx electron-builder",
-    "lint": "tsc --noEmit",
-    "clean": "rm -rf dist"
+  "bin": {
+    "omnix": "./dist/cli.js"
   },
-  "build": {
-    "appId": "com.lemonelabs.omnix",
-    "productName": "Omnix Studio",
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "server.js",
-      "package.json"
-    ],
-    "directories": {
-      "output": "release"
-    },
-    "win": {
-      "target": "portable",
-      "icon": "electron/icon.png"
-    }
+  "scripts": {
+    "engine": "tsx src/engine/main.ts",
+    "cli": "tsx src/cli/index.ts",
+    "ui:dev": "vite",
+    "desktop": "concurrently \"npm run engine\" \"wait-on tcp:3000 && electron .\""
   },
   "dependencies": {
-    "@base-ui/react": "^1.3.0",
-    "@fontsource-variable/geist": "^5.2.8",
-    "@huggingface/transformers": "^4.0.1",
-    "@radix-ui/react-slider": "^1.3.6",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "cors": "^2.8.6",
-    "dotenv": "^17.2.3",
+    "@huggingface/transformers": "^3.0.0",
+    "onnxruntime-node": "^1.20.0",
+    "commander": "^12.0.0",
+    "ws": "^8.18.0",
     "express": "^4.21.2",
-    "kokoro-js": "^1.2.1",
-    "lucide-react": "^0.546.0",
-    "motion": "^12.23.24",
-    "multer": "^2.1.1",
-    "onnxruntime-node": "^1.24.3",
-    "onnxruntime-web": "^1.25.0-dev.20260327-722743c0e2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "shadcn": "^4.2.0",
-    "tailwind-merge": "^3.5.0",
-    "tw-animate-css": "^1.4.0",
-    "vite": "^6.2.0"
-  },
-  "devDependencies": {
-    "@tailwindcss/vite": "^4.1.14",
-    "@types/express": "^4.17.21",
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.4",
-    "autoprefixer": "^10.4.21",
-    "concurrently": "^9.1.0",
-    "electron": "^41.2.0",
-    "electron-builder": "^25.1.8",
-    "electron-is-dev": "^3.0.1",
-    "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "wait-on": "^8.0.1"
+    "cors": "^2.8.6",
+    "kokoro-js": "^1.2.1"
   }
 }
