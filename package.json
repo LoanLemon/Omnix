@@ -1,6 +1,8 @@
 {
   "name": "omnix",
   "version": "0.2.0",
+  "author": "Dustin Lee/LemOne Labs",
+  "description": "",
   "type": "module",
   "bin": {
     "omnix": "./dist/cli.js"

@@ -62,6 +62,25 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
+  // Health endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      engine: "Omnix Local Engine v0.2.0",
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch
+    });
+  });
+
+  // Verify native acceleration
+  try {
+    await import("onnxruntime-node");
+    console.log("ONNX Runtime native acceleration ready.");
+  } catch (e: any) {
+    console.warn("WARNING: onnxruntime-node not found. Engine will run on CPU WASM backend.");
+  }
+
   // AI Models Cache
   let textPipeline: any = null;
   let visionPipeline: any = null;
@@ -314,7 +333,9 @@ No other outputs are valid.`;
         const { type, prompt, modelId, category } = JSON.parse(message.toString());
 
         if (type === "GENERATE") {
-          const pipe = await engine.swapModel(modelId, category);
+          const pipe = await engine.swapModel(modelId, category, (p) => {
+            ws.send(JSON.stringify({ type: "PROGRESS", data: p }));
+          });
           
           await pipe(prompt, {
             max_new_tokens: 512,

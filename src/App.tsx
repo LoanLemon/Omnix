@@ -278,7 +278,9 @@ export default function App() {
     loadedModelId, 
     selectedModels, 
     loadModel, 
-    addLog
+    addLog,
+    setIsModelLoading,
+    setLoadingProgress
   );
 
   // Coder Mode Switching Logic

@@ -8,7 +8,9 @@ export function useChatLogic(
   loadedModelId: string | null,
   selectedModels: Record<string, string>,
   loadModel: (cat: string, id?: string) => void,
-  addLog: (msg: string, type?: "info" | "error" | "success") => void
+  addLog: (msg: string, type?: "info" | "error" | "success") => void,
+  setIsModelLoading: (val: boolean) => void,
+  setLoadingProgress: (val: any) => void
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -53,56 +55,87 @@ export function useChatLogic(
     setMessages(prev => [...prev, userMsg]);
     setIsGenerating(true);
 
-    // Use WebSocket for streaming from the backend engine
-    try {
-      const socket = new WebSocket(`ws://${window.location.host}`);
+    const connectAndSend = (retryCount = 0) => {
+      const isElectron = !!(window as any).electron;
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const host = isElectron ? "localhost:9777" : window.location.host;
       
-      socket.onopen = () => {
-        socket.send(JSON.stringify({
-          type: "GENERATE",
-          prompt: input,
-          modelId: selectedModels.text || "phi-3-mini",
-          category: "text"
-        }));
-      };
+      try {
+        const socket = new WebSocket(`${protocol}://${host}`);
+        
+        socket.onopen = () => {
+          addLog("Connected to Omnix Engine.", "success");
+          setIsModelLoading(true); // WebSocket engine will likely need to load/swap the model
+          socket.send(JSON.stringify({
+            type: "GENERATE",
+            prompt: input,
+            modelId: selectedModels.text || "phi-3-mini",
+            category: "text"
+          }));
+        };
 
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === "TOKEN") {
-          setMessages(prev => {
-            // Check if transition from user message to assistant response
-            if (prev[prev.length - 1].role === "user") {
-              return [...prev, { role: "assistant", content: data.text }];
-            }
+        socket.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type === "PROGRESS") {
+            const progressInfo = data.data;
+            const progressValue = isNaN(progressInfo.progress) ? 0 : progressInfo.progress;
             
-            // Otherwise update last assistant message
-            const newMessages = [...prev];
-            for (let i = newMessages.length - 1; i >= 0; i--) {
-              if (newMessages[i].role === "assistant") {
-                newMessages[i] = { ...newMessages[i], content: data.text };
-                break;
+            setLoadingProgress((prev: any) => ({
+              ...prev,
+              [progressInfo.file || "engine-model"]: {
+                progress: progressInfo.status === "done" ? 100 : progressValue,
+                status: progressInfo.status || "loading"
               }
-            }
-            return newMessages;
-          });
-        } else if (data.type === "COMPLETE") {
-          setIsGenerating(false);
-          socket.close();
-        }
-      };
+            }));
+            
+            addLog(`Engine Progress: ${progressInfo.status} ${Math.round(progressValue)}%`);
+          } else if (data.type === "TOKEN") {
+            setIsModelLoading(false); // Once tokens flow, loading is definitely done
+            setMessages(prev => {
+              if (prev[prev.length - 1].role === "user") {
+                return [...prev, { role: "assistant", content: data.text }];
+              }
+              const newMessages = [...prev];
+              for (let i = newMessages.length - 1; i >= 0; i--) {
+                if (newMessages[i].role === "assistant") {
+                  newMessages[i] = { ...newMessages[i], content: data.text };
+                  break;
+                }
+              }
+              return newMessages;
+            });
+          } else if (data.type === "COMPLETE") {
+            setIsGenerating(false);
+            setIsModelLoading(false);
+            setLoadingProgress({});
+            socket.close();
+          } else if (data.type === "ERROR") {
+            addLog(`Engine Error: ${data.message}`, "error");
+            setIsGenerating(false);
+            setIsModelLoading(false);
+            socket.close();
+          }
+        };
 
-      socket.onerror = (err) => {
-        console.error("WebSocket error:", err);
+        socket.onerror = (err) => {
+          console.error("WebSocket error:", err);
+          if (retryCount < 3) {
+            addLog(`Retrying connection to engine (${retryCount + 1}/3)...`, "info");
+            setTimeout(() => connectAndSend(retryCount + 1), 1000);
+          } else {
+            addLog("Could not connect to Omnix Engine. Please check if the local server is running.", "error");
+            setIsGenerating(false);
+          }
+        };
+      } catch (err) {
+        console.error("Failed to connect to WebSocket:", err);
         setIsGenerating(false);
-        addLog("WebSocket connection error", "error");
-      };
-    } catch (err) {
-      console.error("Failed to connect to WebSocket:", err);
-      setIsGenerating(false);
-    }
-    
+      }
+    };
+
+    connectAndSend();
     setInput("");
-  }, [input, selectedModels, addLog]);
+  }, [input, selectedModels, addLog, setIsModelLoading, setLoadingProgress]);
 
   return {
     messages,

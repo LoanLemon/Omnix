@@ -99,6 +99,20 @@ function startInternalServer() {
       mainWindow.webContents.send('execute-inference', request.data);
     }
   });
+
+  serverProcess.on('error', (err) => {
+    console.error('Engine process error:', err);
+    if (mainWindow) {
+      mainWindow.webContents.executeJavaScript(`console.error("Omnix Engine failed to start: ${err.message}")`);
+    }
+  });
+
+  serverProcess.on('exit', (code) => {
+    console.log(`Engine process exited with code ${code}`);
+    if (code !== 0 && code !== null) {
+      dialog.showErrorBox('Omnix Engine Error', `The local AI engine exited unexpectedly with code ${code}. UI features will be limited to browser-only mode.`);
+    }
+  });
 }
 
 ipcMain.on('inference-result', (event, { requestId, response }) => {

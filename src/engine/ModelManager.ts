@@ -11,17 +11,18 @@ class ModelManager {
   private directorPipeline: any = null;
   
   // LRU-lite: Keep the Director in memory if possible, swap others
-  async getDirector() {
+  async getDirector(onProgress?: (p: any) => void) {
     if (!this.directorPipeline) {
       console.log("Loading Director Model (Orchestrator)...");
       this.directorPipeline = await pipeline("text-generation", "onnx-community/Qwen2.5-0.5B-Instruct", {
         device: "cpu", // Keep director on CPU to save GPU VRAM for heavy tasks
+        progress_callback: onProgress
       });
     }
     return this.directorPipeline;
   }
 
-  async swapModel(modelId: string, category: string) {
+  async swapModel(modelId: string, category: string, onProgress?: (p: any) => void) {
     if (this.currentModelId === modelId) return this.currentPipeline;
 
     console.log(`Hot-swapping to: ${modelId} (${category})`);
@@ -29,7 +30,7 @@ class ModelManager {
     // Explicitly clear memory of previous pipeline
     if (this.currentPipeline) {
       this.currentPipeline = null;
-      if (global.gc) global.gc(); // Requires --expose-gc
+      if (global.gc) (global as any).gc(); // Requires --expose-gc
     }
 
     const modelInfo = MODELS.find(m => m.id === modelId);
@@ -41,7 +42,10 @@ class ModelManager {
 
     this.currentPipeline = await pipeline(task, modelInfo.modelID, {
       device: "node", // Uses onnxruntime-node
-      progress_callback: (p) => console.log(`Loading ${modelId}: ${Math.round(p.progress || 0)}%`)
+      progress_callback: (p) => {
+        console.log(`Loading ${modelId}: ${Math.round(p.progress || 0)}%`);
+        if (onProgress) onProgress(p);
+      }
     });
 
     this.currentModelId = modelId;
