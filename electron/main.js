@@ -85,12 +85,13 @@ function createTray() {
 // In main.js
 
 function startInternalServer() {
-  const serverPath = path.join(__dirname, '../server.js');
+  const serverPath = isDev 
+    ? path.join(__dirname, '../server.ts')
+    : path.join(__dirname, '../dist/server.js');
   
-  // Use tsx to run the .ts file in development
-  // In production, you would typically bundle this to .js
   serverProcess = fork(serverPath, [], {
-    execArgv: isDev ? ['--import', 'tsx'] : []
+    execArgv: isDev ? ['--import', 'tsx'] : [],
+    env: { ...process.env, PORT: 9777, NODE_ENV: isDev ? 'development' : 'production' }
   });
   
   serverProcess.on('message', async (request) => {
@@ -108,12 +109,47 @@ ipcMain.on('inference-result', (event, { requestId, response }) => {
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=16384');
 app.commandLine.appendSwitch('enable-unsafe-webgpu');
 
+// Handle CLI arguments
+const isCliMode = process.argv.some(arg => arg === '--cli' || arg === '-c');
+const hasParameters = process.argv.length > (isDev ? 2 : 1);
+
+function runCli(args) {
+  const cliPath = isDev 
+    ? path.join(__dirname, '../src/cli/index.ts')
+    : path.join(__dirname, '../dist/cli.js');
+    
+  console.log(`Executing CLI command: ${args.join(' ')}`);
+  
+  const cliProcess = fork(cliPath, args, {
+    execArgv: isDev ? ['--import', 'tsx'] : [],
+    env: { ...process.env, PORT: 9777 }
+  });
+  
+  cliProcess.on('exit', (code) => {
+    console.log(`CLI command finished with code ${code}`);
+    app.isQuitting = true;
+    app.quit();
+  });
+}
+
 app.whenReady().then(async () => {
   // Ensure the workspace is ready BEFORE the window opens
   await fs.mkdir(WORKSPACE_DIR, { recursive: true }).catch(console.error);
   startInternalServer();
-  createWindow();
-  createTray(); // <--- You were missing this call
+  
+  if (!isCliMode && !hasParameters) {
+    createWindow();
+    createTray();
+  } else {
+    console.log("Omnix running in background/CLI mode...");
+    const userArgs = process.argv.slice(isDev ? 2 : 1).filter(a => a !== '--cli' && a !== '-c');
+    
+    // Always run CLI if explicitly requested via --cli OR if parameters are provided without UI
+    if (isCliMode || userArgs.length > 0) {
+      // Give the internal engine some time to warm up
+      setTimeout(() => runCli(userArgs), 2000);
+    }
+  }
   
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

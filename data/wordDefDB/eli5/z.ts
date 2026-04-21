@@ -1,0 +1,22 @@
+
+export const DEFINITIONS_Z: Map<string, string> = new Map([
+  ['z', 'The very last letter of the alphabet, like in "zebra" or "zipper."'],
+  ['zambia', 'The name of a country in Africa.'],
+  ['zara', 'A popular store that sells fashionable clothes.'],
+  ['zealand', 'Part of the name of the country New Zealand.'],
+  ['zebra', 'An animal that looks like a horse with black and white stripes.'],
+  ['zen', 'A peaceful, calm feeling you can get from meditating.'],
+  ['zero', 'The number that means "nothing."'],
+  ['zeus', 'In old Greek stories, he was the king of all the gods and the god of thunder.'],
+  ['zimbabwe', 'The name of a country in Africa.'],
+  ['zinc', 'A type of metal. It is also a mineral that your body needs to stay healthy.'],
+  ['zip', 'To close a zipper. It also means to compress computer files to make them smaller.'],
+  ['zoloft', 'A medicine from a doctor that can help grown-ups when they are feeling very sad or worried.'],
+  ['zombie', 'A scary, make-believe monster that is a dead person who has come back to life and walks around.'],
+  ['zone', 'A special area.'],
+  ['zones', 'More than one special area.'],
+  ['zoning', 'The rules a city has for what kinds of buildings can be built in certain areas.'],
+  ['zoo', 'A park where you can go to see all kinds of animals from around the world.'],
+  ['zoom', 'To make a picture look bigger and closer very quickly.'],
+  ['zope', 'A special tool that computer programmers can use to build websites.'],
+]);

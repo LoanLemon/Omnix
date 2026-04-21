@@ -157,7 +157,7 @@ export default function App() {
               data: { text: prompt, systemPrompt: extra.systemPrompt, requestId }
             });
             break;
-          case "vision":
+          case "vision": {
             // Convert base64 back to blob URL for worker
             const visionBlob = await fetch(`data:image/jpeg;base64,${extra.image}`).then(r => r.blob());
             const visionUrl = URL.createObjectURL(visionBlob);
@@ -166,6 +166,7 @@ export default function App() {
               data: { image: visionUrl, prompt, requestId }
             });
             break;
+          }
           case "director":
             worker.current.postMessage({
               type: "generate",
@@ -577,7 +578,7 @@ ${context}
           playAudio(data.audio, data.sampling_rate);
           addLog("Speech generated and playing", "success");
           break;
-        case "music-result":
+        case "music-result": {
           setIsGenerating(false);
           if (data.requestId && window.electron) {
             window.electron.sendInferenceResult(data.requestId, { status: "success", message: "Music generated" });
@@ -601,6 +602,7 @@ ${context}
             loadModelRef.current('director');
           }
           break;
+        }
         case "image-result":
           setIsGenerating(false);
           if (data.requestId && window.electron) {
@@ -954,7 +956,7 @@ ${context}
         addLog("Coder Model sent a message", "info");
         break;
 
-      case "list_files":
+      case "list_files": {
         const fileList = sandboxFilesRef.current.map(f => f.name).join(", ");
         addLog(`Listing files: ${fileList}`, "info");
         setTextModelQueue(prev => [...prev, { 
@@ -963,8 +965,9 @@ ${context}
           hidden: true 
         }]);
         break;
+      }
 
-      case "read_file":
+      case "read_file": {
         const fileToRead = sandboxFilesRef.current.find(f => f.name === params.name);
         if (fileToRead) {
           addLog(`Reading file: ${params.name}`, "info");
@@ -987,8 +990,9 @@ ${context}
           }]);
         }
         break;
+      }
 
-      case "read_function":
+      case "read_function": {
         const fileWithFunc = sandboxFilesRef.current.find(f => f.name === params.name);
         if (fileWithFunc) {
           addLog(`Reading function ${params.function} in ${params.name}`, "info");
@@ -1016,6 +1020,7 @@ ${context}
           }]);
         }
         break;
+      }
 
       case "write_function":
         setSandboxFiles(prev => {
@@ -1040,7 +1045,7 @@ ${context}
         addLog(`Function ${params.function} updated in ${params.name}`, "success");
         break;
 
-      case "route_to_text":
+      case "route_to_text": {
         addLog(`Routing to text model: ${params.prompt.substring(0, 30)}...`, "info");
         const embedModel = MODELS.find(m => m.id === "nomic-embed-text-v1.5");
         if (enableRAG && embedModel && worker.current) {
@@ -1067,6 +1072,7 @@ ${context}
           setTextModelQueue(prev => [...prev, { text: params.prompt }]);
         }
         break;
+      }
     }
   }, [addLog, isCategoryDisabled, setImageModelQueue, setMusicModelQueue, setSandboxFiles, setActiveTab, speakEnabled, setIsGenerating, setMessages, setTextModelQueue, enableRAG, worker, loadedModelId, loadModel, isCoderMode]);
 

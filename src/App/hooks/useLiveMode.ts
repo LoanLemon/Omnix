@@ -14,7 +14,7 @@ export function useLiveMode(
 ) {
   const [isLiveMode, setIsLiveMode] = useState(false);
   const screenStreamRef = useRef<MediaStream | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<number | null>(null);
   const lastScreenshotRef = useRef<string | null>(null);
   
   // Use refs to avoid stale closures in setInterval

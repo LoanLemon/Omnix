@@ -5,6 +5,8 @@ import { fileURLToPath } from "url";
 import cors from "cors";
 import multer from "multer";
 import { pipeline } from "@huggingface/transformers";
+import { WebSocketServer } from "ws";
+import { engine } from "./src/engine/ModelManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,7 +61,7 @@ async function requestInference(category: string, prompt: string, extraData: any
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 9777;
 
   app.use(cors());
   app.use(express.json());
@@ -269,6 +271,24 @@ No other outputs are valid.`;
     }
   });
 
+  app.post("/api/chat", async (req, res) => {
+    try {
+      const { prompt, category = "text" } = req.body;
+      if (!prompt) return res.status(400).json({ error: "Prompt is required" });
+
+      const intent = await engine.route(prompt);
+      // Logic to select the right model ID based on intent
+      const targetModel = intent.includes("image") ? "janus-pro-1b" : "llama-3.2-3b";
+      
+      const pipe = await engine.swapModel(targetModel, category);
+      const output = await pipe(prompt);
+      
+      res.json({ intent, response: output[0].generated_text });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -284,9 +304,38 @@ No other outputs are valid.`;
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Omnix Server running on http://localhost:${PORT}`);
     console.log(`Local API available at http://localhost:${PORT}/api`);
+  });
+
+  const wss = new WebSocketServer({ server });
+
+  wss.on("connection", (ws) => {
+    console.log("WebSocket client connected to Omnix Engine");
+    ws.on("message", async (message) => {
+      try {
+        const { type, prompt, modelId, category } = JSON.parse(message.toString());
+
+        if (type === "GENERATE") {
+          const pipe = await engine.swapModel(modelId, category);
+          
+          await pipe(prompt, {
+            max_new_tokens: 512,
+            callback_function: (beams: any) => {
+              const decoded = pipe.tokenizer.decode(beams[0].output_token_ids, { skip_special_tokens: true });
+              ws.send(JSON.stringify({ type: "TOKEN", text: decoded }));
+            }
+          });
+          ws.send(JSON.stringify({ type: "COMPLETE" }));
+        }
+      } catch (err: any) {
+        console.error("WebSocket message error:", err);
+        ws.send(JSON.stringify({ type: "ERROR", message: err.message }));
+      }
+    });
+
+    ws.on("close", () => console.log("WebSocket client disconnected"));
   });
 }
 

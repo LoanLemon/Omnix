@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback } from "react";
 
 export function useSpeechToText(
   worker: React.MutableRefObject<Worker | null>,

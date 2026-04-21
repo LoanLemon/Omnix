@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import React, { useCallback } from "react";
 import { tts } from "../../lib/tts";
 
 export function useSpeechManagement(
