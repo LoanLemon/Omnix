@@ -1,6 +1,6 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
+import { fileURLToPath } from "url";
 import cors from "cors";
 import multer from "multer";
 import { pipeline } from "@huggingface/transformers";
@@ -77,7 +77,7 @@ async function startServer() {
   try {
     await import("onnxruntime-node");
     console.log("ONNX Runtime native acceleration ready.");
-  } catch (e: any) {
+  } catch (_e) {
     console.warn("WARNING: onnxruntime-node not found. Engine will run on CPU WASM backend.");
   }
 
@@ -306,13 +306,15 @@ No other outputs are valid.`;
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const distPath = __dirname;
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
@@ -322,6 +324,15 @@ No other outputs are valid.`;
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Omnix Server running on http://localhost:${PORT}`);
     console.log(`Local API available at http://localhost:${PORT}/api`);
+  });
+
+  server.on('error', (e: any) => {
+    if (e.code === 'EADDRINUSE') {
+      console.error(`ERROR: Port ${PORT} is already in use. Please close other Omnix instances.`);
+      process.exit(1);
+    } else {
+      console.error("Server error:", e);
+    }
   });
 
   const wss = new WebSocketServer({ server });
@@ -356,4 +367,8 @@ No other outputs are valid.`;
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("CRITICAL: Failed to start Omnix Engine");
+  console.error(err);
+  process.exit(1);
+});

@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import isDev from 'electron-is-dev';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import { fork } from 'child_process';
 
 let serverProcess;
@@ -85,14 +86,30 @@ function createTray() {
 // In main.js
 
 function startInternalServer() {
-  const serverPath = isDev 
+  const isDevelopment = !app.isPackaged;
+  const serverPath = isDevelopment 
     ? path.join(__dirname, '../server.ts')
     : path.join(__dirname, '../dist/server.js');
   
+  if (!fsSync.existsSync(serverPath)) {
+    console.error(`CRITICAL: Server script not found at ${serverPath}`);
+    dialog.showErrorBox('Omnix Startup Error', `Internal engine script not found at expected location: ${serverPath}. Please reinstall the application.`);
+    return;
+  }
+
   serverProcess = fork(serverPath, [], {
-    execArgv: isDev ? ['--import', 'tsx'] : [],
-    env: { ...process.env, PORT: 9777, NODE_ENV: isDev ? 'development' : 'production' }
+    execArgv: isDevelopment ? ['--import', 'tsx'] : [],
+    env: { 
+      ...process.env, 
+      PORT: 9777, 
+      NODE_ENV: isDevelopment ? 'development' : 'production',
+      OMNIX_WORKSPACE: WORKSPACE_DIR
+    },
+    silent: true // Capture stdout/stderr
   });
+
+  serverProcess.stdout.on('data', (data) => console.log(`[Engine]: ${data}`));
+  serverProcess.stderr.on('data', (data) => console.error(`[Engine Error]: ${data}`));
   
   serverProcess.on('message', async (request) => {
     if (request.type === 'api-inference-request') {

@@ -1,9 +1,16 @@
 import { pipeline, env } from "@huggingface/transformers";
+import path from "path";
 import { MODELS } from "../modelList";
 
 // Configure for Node.js environment
 env.allowLocalModels = false;
 env.backends.onnx.wasm.numThreads = 1;
+
+if (process.env.OMNIX_WORKSPACE) {
+  const cachePath = path.join(process.env.OMNIX_WORKSPACE, 'cache');
+  env.cacheDir = cachePath;
+  console.log(`Model cache set to: ${cachePath}`);
+}
 
 class ModelManager {
   private currentModelId: string | null = null;
