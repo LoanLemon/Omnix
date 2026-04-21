@@ -3,9 +3,25 @@ import path from "path";
 import { fileURLToPath } from "url";
 import cors from "cors";
 import multer from "multer";
-import { pipeline } from "@huggingface/transformers";
 import { WebSocketServer } from "ws";
-import { engine } from "./src/engine/ModelManager.js";
+
+// Helpers for dynamic AI loading
+let transformersLib: any = null;
+async function getTransformers() {
+  if (!transformersLib) {
+    transformersLib = await import("@huggingface/transformers");
+  }
+  return transformersLib;
+}
+
+let engineInstance: any = null;
+async function getEngine() {
+  if (!engineInstance) {
+    const mod = await import("./src/engine/ModelManager.js");
+    engineInstance = mod.engine;
+  }
+  return engineInstance;
+}
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -73,11 +89,21 @@ async function startServer() {
     });
   });
 
+  // Diagnostic Log
+  if (process.env.OMNIX_WORKSPACE) {
+    const logPath = path.join(process.env.OMNIX_WORKSPACE, 'engine.log');
+    const logStartup = async (msg: string) => {
+      const fsSync = await import("fs");
+      fsSync.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
+    };
+    await logStartup("Engine Startup Sequence Initialized");
+  }
+
   // Verify native acceleration
   try {
     await import("onnxruntime-node");
     console.log("ONNX Runtime native acceleration ready.");
-  } catch (_e) {
+  } catch {
     console.warn("WARNING: onnxruntime-node not found. Engine will run on CPU WASM backend.");
   }
 
@@ -87,6 +113,7 @@ async function startServer() {
 
   async function getTextPipeline() {
     if (!textPipeline) {
+      const { pipeline } = await getTransformers();
       textPipeline = await pipeline("text-generation", "Xenova/phi-3-mini-4k-instruct");
     }
     return textPipeline;
@@ -94,6 +121,7 @@ async function startServer() {
 
   async function getVisionPipeline() {
     if (!visionPipeline) {
+      const { pipeline } = await getTransformers();
       visionPipeline = await pipeline("image-to-text", "Xenova/vit-gpt2-image-captioning");
     }
     return visionPipeline;
@@ -102,6 +130,7 @@ async function startServer() {
   let sttPipeline: any = null;
   async function getSTTPipeline() {
     if (!sttPipeline) {
+      const { pipeline } = await getTransformers();
       sttPipeline = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en");
     }
     return sttPipeline;
@@ -291,6 +320,12 @@ No other outputs are valid.`;
       const { prompt, category = "text" } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
+      if (process.send) {
+        const result: any = await requestInference(category as any, prompt);
+        return res.json(result);
+      }
+
+      const engine = await getEngine();
       const intent = await engine.route(prompt);
       // Logic to select the right model ID based on intent
       const targetModel = intent.includes("image") ? "janus-pro-1b" : "llama-3.2-3b";
@@ -344,7 +379,8 @@ No other outputs are valid.`;
         const { type, prompt, modelId, category } = JSON.parse(message.toString());
 
         if (type === "GENERATE") {
-          const pipe = await engine.swapModel(modelId, category, (p) => {
+          const engine = await getEngine();
+          const pipe = await engine.swapModel(modelId, category, (p: any) => {
             ws.send(JSON.stringify({ type: "PROGRESS", data: p }));
           });
           

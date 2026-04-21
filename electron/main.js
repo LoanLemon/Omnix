@@ -1,6 +1,11 @@
 import os from 'os';
 import { app, BrowserWindow, Tray, Menu, ipcMain, dialog } from 'electron';
 import path from 'path';
+
+// --- WebGPU Enablement ---
+app.commandLine.appendSwitch('enable-unsafe-webgpu');
+app.commandLine.appendSwitch('enable-features', 'Vulkan'); 
+// -------------------------
 import { fileURLToPath } from 'url';
 import isDev from 'electron-is-dev';
 import fs from 'fs/promises';
