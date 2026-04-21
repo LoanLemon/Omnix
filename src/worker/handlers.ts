@@ -14,7 +14,6 @@ export async function handleGenerate(data: any) {
     state.isInterrupted = false;
     let startTime = performance.now();
     let tokenCount = 0;
-    let promptLength = 0;
 
     const rawInput = messages || text;
     let finalInput = rawInput;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
 export function useSystemStats(addLog: (msg: string, type?: "info" | "error" | "success") => void) {
   const [systemRam, setSystemRam] = useState<number>(8);
@@ -25,7 +25,7 @@ export function useSystemStats(addLog: (msg: string, type?: "info" | "error" | "
             used: stats.usedMB,
             limit: stats.totalMB
           });
-        } catch (e) {
+        } catch {
           console.error("Failed to fetch OS memory stats");
         }
       }, 2000);

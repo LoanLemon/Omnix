@@ -30,7 +30,7 @@ import { PreviewSidebar } from "./App/components/PreviewSidebar";
 import { ErrorOverlay } from "./App/components/ErrorOverlay";
 
 // Types
-import { LogEntry, SandboxFile } from "./App/types";
+import { SandboxFile, LogEntry } from "./App/types";
 
 import { TEXT_SYSTEM_PROMPT, CODER_SYSTEM_PROMPT, DIRECTOR_SYSTEM_PROMPT, getModePrompt } from "./promptLibrary/systemPrompts";
 
@@ -254,10 +254,8 @@ export default function App() {
     textModelQueueRef,
     directorModelQueue,
     setDirectorModelQueue,
-    directorModelQueueRef,
     visionModelQueue,
     setVisionModelQueue,
-    visionModelQueueRef,
     imageModelQueue,
     setImageModelQueue,
     imageModelQueueRef,
@@ -280,20 +278,7 @@ export default function App() {
     loadedModelId, 
     selectedModels, 
     loadModel, 
-    addLog, 
-    ramLimitPercent, 
-    setMemoryUsage,
-    activeCategory,
-    () => {
-      tts.stop();
-      speechQueueRef.current = [];
-      spokenTextLengthRef.current = 0;
-      isSpeakingRef.current = false;
-    },
-    isCoderMode,
-    isHiddenRef,
-    isLiveModeRef,
-    isRoutingRef
+    addLog
   );
 
   // Coder Mode Switching Logic
@@ -356,7 +341,7 @@ export default function App() {
     }
   );
 
-  const { isLiveMode, toggleLiveMode, lastScreenshotRef } = useLiveMode(
+  const { isLiveMode, toggleLiveMode } = useLiveMode(
     addLog,
     flushRecording,
     isRecording,
@@ -417,7 +402,7 @@ export default function App() {
     }
   }, [isCoderMode, chatMode, setChatMode]);
 
-  const handleEmbedResult = async (embedding: number[], text: string, metadata?: any) => {
+  const handleEmbedResult = useCallback(async (embedding: number[], text: string, metadata?: any) => {
     if (metadata?.type === "archive") {
       await memoryStore.add({
         id: crypto.randomUUID(),
@@ -467,7 +452,7 @@ ${context}
       addLog(`Warning: Could not find model info for ${currentTextModelId}. Attempting to load anyway...`, "error");
       loadModel(targetCategory, currentTextModelId);
     }
-  };
+  }, [addLog, isCoderMode, chatMode, setTextModelQueue, selectedModels, loadModel]);
 
   // Update refs that are used in the worker listener
   const isModelReadyRef = useRef(isModelReady);
@@ -676,7 +661,7 @@ ${context}
     return () => {
       worker.current?.terminate();
     };
-  }, [addLog]);
+  }, [addLog, handleImageResult, isCoderMode, setInput, setIsGenerating, setIsModelLoading, setIsModelReady, setLoadedModelId, setLoadingProgress, setMessages, setTextModelQueue, setVisionModelQueue, worker]);
 
   // Handle TTS loading/unloading based on speakEnabled
   useEffect(() => {
@@ -1131,7 +1116,7 @@ ${context}
               handleToolCall(toolCall);
               return;
             }
-          } catch (e) {}
+          } catch (_e) {}
         }
       }
       
@@ -1162,7 +1147,7 @@ ${context}
             }
             break; 
           }
-        } catch (e) {
+        } catch {
           // Try to repair common AI mistakes
           try {
             const repaired = block.replace(/`([\s\S]*?)`/g, (match, p1) => {
@@ -1177,7 +1162,9 @@ ${context}
               }
               break;
             }
-          } catch (innerE) {}
+          } catch {
+            // Repair failed
+          }
         }
       }
     }
@@ -1223,7 +1210,7 @@ ${context}
       addLog("Switching back to director model for routing...");
       loadModelRef.current('director');
     }
-  }, [addLog, handleToolCall, processSpeechQueue, summarizeChat, isCoderMode]);
+  }, [addLog, handleToolCall, processSpeechQueue, summarizeChat, isCoderMode, setActiveTab, setTextModelQueue]);
 
   useEffect(() => {
     handleAssistantCompleteRef.current = handleAssistantComplete;

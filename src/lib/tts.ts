@@ -189,7 +189,7 @@ class KokoroEngine {
     stop(incrementSession = true) {
         if (incrementSession) this.playSessionId++;
         if (this.currentSource) {
-            try { this.currentSource.stop(); } catch (e) {}
+            try { this.currentSource.stop(); } catch (_e) {}
             this.currentSource = null;
         }
     }

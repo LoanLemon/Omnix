@@ -1,9 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Play, RotateCcw, Terminal, FileCode, Eye, Code2 } from "lucide-react";
 import { SandboxFile } from "../App/types";
-import { useApp } from "../App/context/AppContext";
 
 interface SandboxProps {
   files: SandboxFile[];
@@ -17,7 +16,7 @@ export function Sandbox({ files }: SandboxProps) {
 
   const activeFile = files[activeFileIndex] || files[0];
 
-  const runCode = () => {
+  const runCode = useCallback(() => {
     if (!iframeRef.current || files.length === 0) return;
     setOutput([]);
 
@@ -79,7 +78,7 @@ export function Sandbox({ files }: SandboxProps) {
     }
 
     iframeRef.current.srcdoc = srcDoc;
-  };
+  }, [files]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -96,7 +95,7 @@ export function Sandbox({ files }: SandboxProps) {
 
   useEffect(() => {
     if (files.length > 0) runCode();
-  }, [files]);
+  }, [files, runCode]);
 
   return (
     <Card className="bg-zinc-900 border-zinc-800 overflow-hidden flex flex-col h-full shadow-2xl">

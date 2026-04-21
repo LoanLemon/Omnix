@@ -1,4 +1,4 @@
-import { Sparkles, Trash2, Database, Settings, Cpu, Bot, Image as ImageIcon, Music, Code2, Monitor, Zap, Globe, Sun, Moon } from "lucide-react";
+import { Sparkles, Trash2, Database, Settings, Bot, Image as ImageIcon, Music, Code2, Monitor, Zap, Globe, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";

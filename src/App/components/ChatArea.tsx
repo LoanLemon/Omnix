@@ -5,9 +5,7 @@ import remarkGfm from "remark-gfm";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import { Message } from "../types";
 import type { RefObject } from "react";
 import { useApp } from "../context/AppContext";
 

@@ -3,8 +3,6 @@ import * as ort from "onnxruntime-web";
 
 const { 
   RawImage,
-  AutoTokenizer,
-  AutoProcessor,
 } = Transformers as any;
 
 export async function analyzeLFM(

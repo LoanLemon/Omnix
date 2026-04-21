@@ -8,15 +8,7 @@ export function useChatLogic(
   loadedModelId: string | null,
   selectedModels: Record<string, string>,
   loadModel: (cat: string, id?: string) => void,
-  addLog: (msg: string, type?: "info" | "error" | "success") => void,
-  ramLimitPercent: number,
-  setMemoryUsage: (val: { used: number; total: number }) => void,
-  activeCategory: string,
-  resetSpeech?: () => void,
-  isCoderMode?: boolean,
-  isHiddenRef?: MutableRefObject<boolean>,
-  isLiveModeRef?: MutableRefObject<boolean>,
-  isRoutingRef?: MutableRefObject<boolean>
+  addLog: (msg: string, type?: "info" | "error" | "success") => void
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -78,9 +70,6 @@ export function useChatLogic(
         const data = JSON.parse(event.data);
         if (data.type === "TOKEN") {
           setMessages(prev => {
-            const assistantMsgs = prev.filter(m => m.role === "assistant");
-            const lastAssistant = assistantMsgs[assistantMsgs.length - 1];
-            
             // Check if transition from user message to assistant response
             if (prev[prev.length - 1].role === "user") {
               return [...prev, { role: "assistant", content: data.text }];

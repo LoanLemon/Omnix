@@ -1,5 +1,4 @@
 import React, { useCallback } from "react";
-import { LogEntry } from "../types";
 
 export function useAppHandlers(
   addLog: (message: string, type?: "info" | "error" | "success") => void,

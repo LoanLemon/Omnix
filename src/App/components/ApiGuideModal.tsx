@@ -1,7 +1,7 @@
 import React from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Terminal, Code2, Globe, Zap, Image as ImageIcon, Music, Bot, Mic, Volume2 } from "lucide-react";
+import { Terminal, Globe, Zap, Image as ImageIcon, Music, Bot, Mic, Volume2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 

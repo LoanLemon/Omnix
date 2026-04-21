@@ -1,5 +1,5 @@
 import { pipeline, env } from "@huggingface/transformers";
-import { MODELS, ModelInfo } from "../modelList";
+import { MODELS } from "../modelList";
 
 // Configure for Node.js environment
 env.allowLocalModels = false;
