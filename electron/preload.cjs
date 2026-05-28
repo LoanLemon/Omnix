@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('electron', {
   dialog: {
     openFile: () => ipcRenderer.invoke('dialog:openFile'),
   },
+  ipcRenderer: {
+    send: (channel, ...args) => ipcRenderer.send(channel, ...args)
+  },
   onInferenceRequest: (callback) => ipcRenderer.on('execute-inference', (event, data) => callback(data)),
   sendInferenceResult: (requestId, response) => ipcRenderer.send('inference-result', { requestId, response })
 });

@@ -1,410 +1,251 @@
 import express from "express";
+import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import cors from "cors";
 import multer from "multer";
-import { WebSocketServer } from "ws";
+import { createServer } from "http";
+import open from "open";
+import { setupWebSockets, dispatchTask } from "./src/engine/socketHandler.ts";
 
-// Helpers for dynamic AI loading
-let transformersLib: any = null;
-async function getTransformers() {
-  if (!transformersLib) {
-    transformersLib = await import("@huggingface/transformers");
-  }
-  return transformersLib;
-}
+process.on('uncaughtException', (err) => {
+  console.error('💥 Uncaught Exception:', err);
+});
 
-let engineInstance: any = null;
-async function getEngine() {
-  if (!engineInstance) {
-    const mod = await import("./src/engine/ModelManager.js");
-    engineInstance = mod.engine;
-  }
-  return engineInstance;
-}
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PORT = parseInt(process.env.PORT || '3000');
+const args = process.argv.slice(2);
+const isSilent = args.includes("--silent") || process.env.NODE_ENV === "production" || !!process.env.K_SERVICE;
+const pidArgIndex = args.indexOf("--dependent-pid");
+const dependentPid = pidArgIndex !== -1 ? parseInt(args[pidArgIndex + 1]) : null;
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// --- PROXY ARCHITECTURE FOR ELECTRON ---
-const pendingRequests = new Map<string, any>();
-
-if (process.send) {
-  process.on('message', (msg: any) => {
-    if (msg.type === 'api-inference-response') {
-      const res = pendingRequests.get(msg.requestId);
-      if (res) {
-        res.json(msg.response);
-        pendingRequests.delete(msg.requestId);
-      }
-    }
-  });
-}
-
-async function requestInference(category: string, prompt: string, extraData: any = {}) {
-  return new Promise((resolve, reject) => {
-    const requestId = Math.random().toString(36).substring(7);
-    
-    // Timeout after 60 seconds
-    const timeout = setTimeout(() => {
-      if (pendingRequests.has(requestId)) {
-        pendingRequests.delete(requestId);
-        reject(new Error("Inference request timed out"));
-      }
-    }, 60000);
-
-    pendingRequests.set(requestId, {
-      json: (data: any) => {
-        clearTimeout(timeout);
-        resolve(data);
-      }
-    });
-
-    if (process.send) {
-      process.send({
-        type: 'api-inference-request',
-        data: { requestId, prompt, category, ...extraData }
-      });
-    } else {
-      reject(new Error("Not running in Electron proxy mode"));
-    }
-  });
-}
-// ----------------------------------------
-
 async function startServer() {
+  console.log("🚀 Initializing Omnix Brain...");
   const app = express();
-  const PORT = process.env.PORT || 9777;
+  const server = createServer(app);
+  
+  // Initialize WebSockets (Relay Mode) - ONLY IF EXPLICITLY ENABLED OR IN CERTAIN ENVIRONMENTS
+  const isElectron = !!process.versions.electron;
+  let relayActive = false;
+
+  const startRelay = () => {
+    if (relayActive) return;
+    console.log("📡 Setting up WebSockets (Relay Mode Enabled)...");
+    setupWebSockets(server);
+    relayActive = true;
+  };
+
+  // In standard browser mode (Cloud Run/AI Studio), we don't start the relay by default 
+  // as per user request to avoid server overhead.
+  if (isElectron) {
+    console.log("Omnix: Running in Electron mode. Auto-launching relay server...");
+    startRelay();
+  } else {
+    console.log("Omnix: Running in Standalone Browser mode.");
+  }
 
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
 
-  // Health endpoint
-  app.get("/api/health", (req, res) => {
+  // Relay Control
+  app.post("/api/server/relay", (req, res) => {
+    const { action } = req.body;
+    if (action === "start") {
+      startRelay();
+      return res.json({ status: "ok", message: "Relay started" });
+    }
+    res.json({ status: "ok", relayActive });
+  });
+
+  app.get("/api/server/status", (req, res) => {
     res.json({ 
-      status: "ok", 
-      engine: "Omnix Local Engine v0.2.0",
-      node: process.version,
+      relayActive, 
+      isElectron, 
       platform: process.platform,
       arch: process.arch
     });
   });
 
-  // Diagnostic Log
-  if (process.env.OMNIX_WORKSPACE) {
-    const logPath = path.join(process.env.OMNIX_WORKSPACE, 'engine.log');
-    const logStartup = async (msg: string) => {
-      const fsSync = await import("fs");
-      fsSync.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
-    };
-    await logStartup("Engine Startup Sequence Initialized");
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", pid: process.pid });
+  });
+
+  // --- 2. PID MONITORING ---
+  if (dependentPid && !isNaN(dependentPid)) {
+    console.log(`Omnix: Monitoring parent process PID ${dependentPid}`);
+    setInterval(() => {
+      try {
+        process.kill(dependentPid, 0);
+      } catch (e) {
+        console.log("Omnix: Parent process ended or unreachable. Shutting down...");
+        process.exit();
+      }
+    }, 2000);
+  } else if (pidArgIndex !== -1) {
+    console.log("Omnix: --dependent-pid provided but invalid. Skipping monitoring.");
   }
 
-  // Verify native acceleration
-  try {
-    await import("onnxruntime-node");
-    console.log("ONNX Runtime native acceleration ready.");
-  } catch {
-    console.warn("WARNING: onnxruntime-node not found. Engine will run on CPU WASM backend.");
-  }
-
-  // AI Models Cache
-  let textPipeline: any = null;
-  let visionPipeline: any = null;
-
-  async function getTextPipeline() {
-    if (!textPipeline) {
-      const { pipeline } = await getTransformers();
-      textPipeline = await pipeline("text-generation", "Xenova/phi-3-mini-4k-instruct");
-    }
-    return textPipeline;
-  }
-
-  async function getVisionPipeline() {
-    if (!visionPipeline) {
-      const { pipeline } = await getTransformers();
-      visionPipeline = await pipeline("image-to-text", "Xenova/vit-gpt2-image-captioning");
-    }
-    return visionPipeline;
-  }
-
-  let sttPipeline: any = null;
-  async function getSTTPipeline() {
-    if (!sttPipeline) {
-      const { pipeline } = await getTransformers();
-      sttPipeline = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en");
-    }
-    return sttPipeline;
-  }
-
-  // API Endpoints
+  // --- API ENDPOINTS (Relayed to Browser Engine) ---
+  
+  // Text Generation
   app.post("/api/text", async (req, res) => {
     try {
-      const { prompt, systemPrompt } = req.body;
+      const { prompt, systemPrompt, modelId } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-      if (process.send) {
-        const result: any = await requestInference("text", prompt, { systemPrompt });
-        return res.json(result);
-      }
-
-      const generator = await getTextPipeline();
-      const messages = [
-        { role: "system", content: systemPrompt || "You are Omnix, a helpful AI assistant." },
-        { role: "user", content: prompt }
-      ];
-
-      const output = await generator(messages, { max_new_tokens: 512 });
-      res.json({ response: output[0].generated_text });
+      const output = await dispatchTask("text", prompt, { systemPrompt, modelId });
+      res.json({ response: output });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post("/api/vision", upload.single("image"), async (req: any, res) => {
-    try {
-      const { prompt } = req.body;
-      const file = req.file;
-      if (!file) return res.status(400).json({ error: "Image is required" });
-
-      if (process.send) {
-        // Convert buffer to base64 for IPC
-        const base64Image = file.buffer.toString('base64');
-        const result: any = await requestInference("vision", prompt || "Describe this image", { image: base64Image });
-        return res.json(result);
-      }
-
-      const captioner = await getVisionPipeline();
-      const imageBuffer = file.buffer;
-      const blob = new Blob([imageBuffer]);
-      const imageUrl = URL.createObjectURL(blob);
-
-      const output = await captioner(imageUrl);
-      
-      // If prompt is provided, we could use the caption as context for a text model
-      if (prompt) {
-        const generator = await getTextPipeline();
-        const messages = [
-          { role: "system", content: `You are an image analysis assistant. The image caption is: ${output[0].generated_text}` },
-          { role: "user", content: prompt }
-        ];
-        const textOutput = await generator(messages, { max_new_tokens: 256 });
-        res.json({ caption: output[0].generated_text, response: textOutput[0].generated_text });
-      } else {
-        res.json({ caption: output[0].generated_text });
-      }
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
+  // Director Routing
   app.post("/api/director", async (req, res) => {
     try {
       const { prompt } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-      if (process.send) {
-        const result: any = await requestInference("director", prompt);
-        return res.json(result);
-      }
-
-      const generator = await getTextPipeline();
-      const directorPrompt = `Identify the users intent.
-If the user wants an image generated, output: "image_gen"
-If the user wants music generated, output: "music_gen"
-If the user wants a website or app generated, output: "sandbox"
-For all other prompts/text generated, output: "route_to_text"
-
-Only output one of the four valid outputs (image_gen/music_gen/sandbox/route_to_text). 
-No other outputs are valid.`;
-
-      const messages = [
-        { role: "system", content: directorPrompt },
-        { role: "user", content: prompt }
-      ];
-
-      const output = await generator(messages, { max_new_tokens: 10 });
-      const intent = output[0].generated_text.trim().toLowerCase();
-      
+      const intent = await dispatchTask("director", prompt);
       res.json({ intent, prompt });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post("/api/image", async (req, res) => {
+  // Vision Analysis
+  app.post("/api/vision", upload.single("image"), async (req: any, res) => {
     try {
-      const { prompt } = req.body;
-      if (!prompt) return res.status(400).json({ error: "Prompt is required" });
+      const { prompt, modelId } = req.body;
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: "Image is required" });
 
-      // In a real scenario, we'd use a Diffusion pipeline here.
-      // For this local API demo, we'll return a simulated success.
-      res.json({ 
-        status: "success", 
-        message: "Image generation triggered", 
-        prompt,
-        url: `https://picsum.photos/seed/${encodeURIComponent(prompt)}/1024/1024` 
-      });
+      const base64Image = `data:image/jpeg;base64,${file.buffer.toString('base64')}`;
+      const response = await dispatchTask("vision", base64Image, { prompt, modelId });
+
+      res.json({ response });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post("/api/music", async (req, res) => {
-    try {
-      const { prompt } = req.body;
-      if (!prompt) return res.status(400).json({ error: "Prompt is required" });
-
-      // Simulated music generation
-      res.json({ 
-        status: "success", 
-        message: "Music generation triggered", 
-        prompt,
-        audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" 
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
+  // Speech-to-Text
   app.post("/api/stt", upload.single("audio"), async (req: any, res) => {
     try {
       const file = req.file;
       if (!file) return res.status(400).json({ error: "Audio file is required" });
-
-      if (process.send) {
-        const base64Audio = file.buffer.toString('base64');
-        const result: any = await requestInference("stt", "transcribe", { audio: base64Audio });
-        return res.json(result);
-      }
-
-      const transcriber = await getSTTPipeline();
       
-      // Convert buffer to Float32Array for Whisper
-      const audioBuffer = file.buffer;
-      // Note: In a real scenario, we'd need to ensure the audio is 16kHz mono
-      // For this demo, we assume the client sends compatible data or we use a library to resample
-      const output = await transcriber(audioBuffer);
-      
-      res.json({ text: output.text });
+      const base64Audio = file.buffer.toString('base64');
+      const text = await dispatchTask("stt", base64Audio);
+
+      res.json({ text });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
+  // Text-to-Speech
   app.post("/api/tts", async (req, res) => {
     try {
-      const { text, voice } = req.body;
+      const { text, modelId } = req.body;
       if (!text) return res.status(400).json({ error: "Text is required" });
 
-      if (process.send) {
-        const result: any = await requestInference("tts", text, { voice });
-        return res.json(result);
-      }
-
-      // Simulated TTS generation
-      // In a real scenario, we'd use a TTS pipeline and return a buffer or URL
-      res.json({ 
-        status: "success", 
-        message: "Speech generation triggered", 
-        text,
-        voice: voice || "af_bella",
-        audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" 
-      });
+      const output = await dispatchTask("tts", text, { modelId });
+      res.json(output);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post("/api/chat", async (req, res) => {
+  // Image Generation
+  app.post("/api/image", async (req, res) => {
     try {
-      const { prompt, category = "text" } = req.body;
+      const { prompt, modelId } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-      if (process.send) {
-        const result: any = await requestInference(category as any, prompt);
-        return res.json(result);
-      }
-
-      const engine = await getEngine();
-      const intent = await engine.route(prompt);
-      // Logic to select the right model ID based on intent
-      const targetModel = intent.includes("image") ? "janus-pro-1b" : "llama-3.2-3b";
-      
-      const pipe = await engine.swapModel(targetModel, category);
-      const output = await pipe(prompt);
-      
-      res.json({ intent, response: output[0].generated_text });
+      const image = await dispatchTask("image-gen", prompt, { modelId });
+      res.json({ status: "success", image });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Vite middleware for development
+  // Music Generation
+  app.post("/api/music", async (req, res) => {
+    try {
+      const { prompt, modelId } = req.body;
+      if (!prompt) return res.status(400).json({ error: "Prompt is required" });
+
+      const output = await dispatchTask("music-gen", prompt, { modelId });
+      res.json({ status: "success", ...output });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- FRONTEND MIDDLEWARE ---
   if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
+    console.log("🛠️ Starting Vite in development mode...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const distPath = __dirname;
+    console.log("📦 Serving production build...");
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Omnix Server running on http://localhost:${PORT}`);
-    console.log(`Local API available at http://localhost:${PORT}/api`);
-  });
-
-  server.on('error', (e: any) => {
-    if (e.code === 'EADDRINUSE') {
-      console.error(`ERROR: Port ${PORT} is already in use. Please close other Omnix instances.`);
-      process.exit(1);
+  server.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`❌ Port ${PORT} is already in use. Please close the other process or set a different PORT.`);
     } else {
-      console.error("Server error:", e);
+      console.error("❌ Server Error:", err);
     }
   });
 
-  const wss = new WebSocketServer({ server });
-
-  wss.on("connection", (ws) => {
-    console.log("WebSocket client connected to Omnix Engine");
-    ws.on("message", async (message) => {
-      try {
-        const { type, prompt, modelId, category } = JSON.parse(message.toString());
-
-        if (type === "GENERATE") {
-          const engine = await getEngine();
-          const pipe = await engine.swapModel(modelId, category, (p: any) => {
-            ws.send(JSON.stringify({ type: "PROGRESS", data: p }));
-          });
-          
-          await pipe(prompt, {
-            max_new_tokens: 512,
-            callback_function: (beams: any) => {
-              const decoded = pipe.tokenizer.decode(beams[0].output_token_ids, { skip_special_tokens: true });
-              ws.send(JSON.stringify({ type: "TOKEN", text: decoded }));
-            }
-          });
-          ws.send(JSON.stringify({ type: "COMPLETE" }));
-        }
-      } catch (err: any) {
-        console.error("WebSocket message error:", err);
-        ws.send(JSON.stringify({ type: "ERROR", message: err.message }));
-      }
-    });
-
-    ws.on("close", () => console.log("WebSocket client disconnected"));
+  server.listen(PORT, "0.0.0.0", async () => {
+    console.log(`🚀 Omnix Brain Active [PID: ${process.pid}] on port ${PORT}`);
+    console.log(`🤖 Local API available at http://localhost:${PORT}/api`);
+    
+    // Only launch GUI if we are definitely local and not silent
+    const isLocal = !process.env.K_SERVICE && !process.env.GAE_SERVICE; // Cloud Run / App Engine check
+    if (!isSilent && isLocal) {
+      launchGUI();
+    }
   });
 }
 
-startServer().catch(err => {
-  console.error("CRITICAL: Failed to start Omnix Engine");
-  console.error(err);
+async function launchGUI() {
+  try {
+    const { default: electron } = await import("electron" as any).catch(() => ({ default: null }));
+    
+    if (electron && (electron as any).app) {
+      console.log("Omnix: Handled by Electron shell.");
+    } else {
+      console.log("Omnix: Opening GUI in default browser...");
+      await open(`http://localhost:${PORT}`);
+    }
+  } catch (err) {
+    console.log("Omnix: Error launching GUI, opening in default browser...");
+    await open(`http://localhost:${PORT}`);
+  }
+}
+
+startServer().catch((err) => {
+  console.error("Critical: Omnix Brain failed to start:", err);
   process.exit(1);
 });

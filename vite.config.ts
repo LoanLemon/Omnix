@@ -10,7 +10,9 @@ export default defineConfig(({mode}) => {
     base: './',
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(__dirname, './src/gui'),
+        '@shared': path.resolve(__dirname, './src/shared'),
+        '@engine': path.resolve(__dirname, './src/engine'),
       },
     },
     server: {

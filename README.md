@@ -1,83 +1,91 @@
 # Omnix Studio
 
-Omnix is a local multi-modal AI studio that allows you to orchestrate vision, speech, and text models entirely on your machine. It provides a robust local API and a powerful Command Line Interface (CLI) to use Omnix as a high-performance inference engine for local workflows.
+Omnix is a local multi-modal AI studio that allows you to orchestrate vision, speech, and text models entirely on your machine. It also provides a robust local API for other applications to use Omnix as an inference engine.
 
 ## Features
 
-- **Multi-Modal Engine**: Support for Text, Vision, STT, TTS, Image Generation, and Music Generation.
-- **Local First**: All models run locally using WebGPU or WASM. No data leaves your machine.
-- **Orchestration**: Intelligent routing via the "Director" mode to handle complex requests.
-- **Live Mode**: Real-time screen and voice analysis for interactive AI assistance.
-- **Sandbox Environment**: Built-in environment for generating, executing, and visualizing code output.
-- **Unified CLI**: Execute complex AI tasks directly from your terminal.
-- **Theme Support**: Polished Light and Dark modes with a modern UI.
-
----
-
-## Command Line Interface (CLI)
-
-Omnix includes a built-in CLI for one-shot AI interactions. Once built or running, you can use the CLI to prompt the local engine.
-
-### Usage
-
-```bash
-# Using npm script
-npm run cli -- -prompt "Analyze the sentiment of this text" -mode director
-
-# Using the precompiled binary (after build)
-./omnix.exe --cli -prompt "Write a story about a brave cat" -mode chat
-```
-
-### Options
-- `-p, --prompt <string>`: **(Required)** The prompt to send to the AI.
-- `-m, --mode <string>`: Operational mode. Options: `director` (default), `chat`, `text`, `vision`, `image`, `music`, `stt`, `tts`.
+- **Multi-Modal**: Support for Text, Vision, STT, TTS, Image Generation, and Music Generation.
+- **Local First**: All models run locally using WebGPU or WASM.
+- **Theme Support**: Polished Light and Dark modes.
+- **Live Mode**: Real-time screen and voice analysis.
+- **Sandbox**: Built-in environment for generating and running code.
 
 ---
 
 ## Local API Guide
 
-Omnix provides a local REST API running on `http://localhost:3000/api`. This allows you to integrate Omnix into your own custom scripts and applications.
+Omnix provides a local API running on `http://localhost:7770/api`.
 
 ### Endpoints
 
-#### 1. Director Routing (`POST /api/director`)
-*The recommended entry point for general queries. It automatically routes the request to the best model.*
-- **Body**: `{"prompt": "string"}`
-- **Response**: `{"intent": "string", "prompt": "string", "response": "string"}`
-
-#### 2. Text Generation (`POST /api/text`)
-- **Body**: `{"prompt": "string", "systemPrompt": "string"}`
+#### 1. Text Generation (`POST /api/text`)
+- **Body**: `{"prompt": "string", "systemPrompt": "string", "modelId": "string"}`
 - **Response**: `{"response": "string"}`
 
-#### 3. Vision Analysis (`POST /api/vision`)
+#### 2. Vision Analysis (`POST /api/vision`)
 - **Body**: `multipart/form-data`
   - `image`: File (Binary)
   - `prompt`: string (Optional)
-- **Response**: `{"caption": "string", "response": "string"}`
+  - `modelId`: string
+- **Response**: `{"response": "string"}`
+
+#### 3. Director Routing (`POST /api/director`)
+- **Body**: `{"prompt": "string"}`
+- **Response**: `{"intent": "string", "prompt": "string"}`
 
 #### 4. Image Generation (`POST /api/image`)
 - **Body**: `{"prompt": "string"}`
-- **Response**: `{"status": "success", "url": "string"}`
+- **Response**: `{"status": "success", "image": "data:image/png;base64,..."}`
 
-#### 5. Speech-to-Text (`POST /api/stt`)
+#### 5. Music Generation (`POST /api/music`)
+- **Body**: `{"prompt": "string"}`
+- **Response**: `{"status": "success", "audio": [...], "sampling_rate": number}`
+
+#### 6. Speech-to-Text (`POST /api/stt`)
 - **Body**: `multipart/form-data`
   - `audio`: File (WAV/MP3)
 - **Response**: `{"text": "string"}`
 
+#### 7. Text-to-Speech (`POST /api/tts`)
+- **Body**: `{"text": "string", "modelId": "string"}`
+- **Response**: `{"audio": [...], "sampling_rate": number}`
+
+### Example Usage (CURL)
+```bash
+curl -X POST http://localhost:7770/api/text \
+     -H "Content-Type: application/json" \
+     -d '{"prompt": "Hello Omnix!"}'
+```
+
 ---
 
-## Setup & Installation
+## For Developers (Headless Mode)
+
+Omnix can be used as a backend service for your own applications.
+
+- **Silent Start**: `omnix --silent` (Starts the engine without opening any GUI window)
+- **Process Attachment**: `omnix --dependent-pid <PID>` (Omnix will automatically shut down when the parent PID is no longer active)
+- **Port Selection**: Use the `PORT` environment variable to override the default 7770 port.
+- **Singleton Pattern**: Starting a second instance of Omnix on the same port will return the PID of the existing process to `stdout` and exit immediately.
+
+---
+
+## Electron Setup Guide
+
+The desktop version of Omnix provides unrestricted RAM access, WebGPU acceleration, and native filesystem integration.
+### Precompiled
+
 
 ### Prerequisites
-- **Node.js**: v18 or higher.
+- **Node.js**: v18 or higher recommended.
 - **NPM**: Standard package manager.
 
-### Installation
+## Installation
 
-1. **Clone the repository**:
+1. **Clone the repository** (if you haven't already):
    ```bash
    git clone https://github.com/LoanLemon/Omnix
-   cd Omnix
+   cd omnix
    ```
 
 2. **Install dependencies**:
@@ -87,39 +95,37 @@ Omnix provides a local REST API running on `http://localhost:3000/api`. This all
 
 ## Running the Application
 
-### Development (Browser/API)
-Starts the local inference server and the UI:
-```bash
-npm run dev
-```
+### Development Mode
+To run the app in development mode with hot-reloading:
 
-### Desktop Version (Electron)
-Launches the full desktop application with WebGPU acceleration:
-```bash
-npm run desktop
-```
+1. **Start the Omnix Orchestrator**:
+   ```bash
+   npm run dev
+   ```
 
-### Building for Production
-To package the application for portable use:
-```bash
-npm run build
-```
-The output will be available in the `dist` and `dist-electron` directories.
+2. **Run as Desktop App (Alternative)**:
+   ```bash
+   npm run desktop
+   ```
 
----
+### Production Build
+To build the application for production:
 
-## Desktop Features
-- **Unrestricted RAM**: Local models can access up to 16GB of system memory for larger parameters.
-- **WebGPU Acceleration**: Direct hardware access for blazing fast inference.
-- **Native Filesystem**: Securely interact with local files and directories via the Sandbox.
-- **Minimize to Tray**: Runs silently in the background for quick access.
+1. **Build the web frontend**:
+   ```bash
+   npm run build
+   ```
+
+### Desktop Features
+- **Unrestricted RAM**: Up to 16GB of heap memory for large models.
+- **WebGPU Acceleration**: Hardware acceleration enabled by default.
+- **Minimize to Tray**: Moves to system tray on close/minimize.
+- **Local Filesystem**: Direct interaction with local files.
 
 ### Troubleshooting
-- **WebGPU Errors**: Ensure your graphics drivers support WebGPU. If not, the engine will fallback to WASM (slower).
-- **Port Conflicts**: Port 3000 is required for the local API. Ensure it's not being used by other services.
+- **WebGPU Errors**: Ensure your graphics drivers are up to date. Some older GPUs may not support WebGPU.
+- **Port Conflicts**: If port 7770 is occupied, the Brain API may fail to start. Ensure no other instances of Omnix are running on port 7770.
 
 ---
 
-*Developed by Dustin Lee at LemOne Labs.*  
-*Contact: loan.lemone@gmail.com*
-
+*Developed by Dustin Lee at LemOne Labs.*

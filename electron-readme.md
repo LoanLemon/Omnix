@@ -23,20 +23,19 @@ This guide will help you set up and run the desktop version of Omnix using Elect
 ## Running the Application
 
 ### Development Mode
-To run the app in development mode with hot-reloading:
+To run the app in development mode:
 
-1. **Start the Vite development server**:
+1. **Start the Desktop environment**:
    ```bash
-   npm run start
+   npm run desktop
    ```
 
 ### Production Build
-To package the application for production:
+To prepare the application for production:
 
-1. **Build the app**:
+1. **Build the web frontend**:
    ```bash
-   # Note: You may need to install electron-builder or electron-packager for full distribution
-   npm run electron:build
+   npm run build
    ```
 
 ## Desktop Features
@@ -49,7 +48,7 @@ To package the application for production:
 ## Troubleshooting
 
 - **WebGPU Errors**: Ensure your graphics drivers are up to date. Some older GPUs may not support WebGPU.
-- **Port Conflicts**: If port 3000 is occupied, the Electron app may fail to connect in dev mode. Ensure no other services are running on port 3000.
+- **Port Conflicts**: If port 7770 is occupied, the Electron app may fail to connect. Ensure no other services are running on port 7770.
 - **Tray Icon**: If the tray icon doesn't appear, ensure you have placed a valid `icon.png` in the `electron/` directory.
 
 ---

@@ -1,249 +1,117 @@
-import os from 'os';
-import { app, BrowserWindow, Tray, Menu, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import path from 'path';
-
-// --- WebGPU Enablement ---
-app.commandLine.appendSwitch('enable-unsafe-webgpu');
-app.commandLine.appendSwitch('enable-features', 'Vulkan'); 
-// -------------------------
 import { fileURLToPath } from 'url';
-import isDev from 'electron-is-dev';
-import fs from 'fs/promises';
-import fsSync from 'fs';
 import { fork } from 'child_process';
 
-let serverProcess;
+// Handling ESM directory names
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-let mainWindow;
-let tray;
+// Check if we are in development mode
+const isDev = !app.isPackaged;
+const isWorkerMode = process.argv.includes('--worker');
+let serverProcess = null;
 
-// --- SECURITY: Define Workspace Boundary ---
-const WORKSPACE_DIR = path.join(app.getPath('documents'), 'OmnixWorkspace');
+function startBackgroundServer() {
+  if (isWorkerMode) return; // Background server shouldn't start its own background server
 
-// Ensure workspace exists
-fs.mkdir(WORKSPACE_DIR, { recursive: true }).catch(console.error);
-
-// Utility to safely resolve and validate paths
-function getSafePath(requestedPath) {
-  const resolvedPath = path.resolve(WORKSPACE_DIR, requestedPath);
-  if (!resolvedPath.startsWith(WORKSPACE_DIR)) {
-    throw new Error('Security Error: Path traversal attempt blocked.');
-  }
-  return resolvedPath;
-}
-// -------------------------------------------
-
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1200, height: 800,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'), 
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: false,
-    },
-    backgroundColor: '#080808',
-    show: false,
-  });
-
-  const startURL = isDev 
-    ? 'http://127.0.0.1:3000' 
-    : `file://${path.join(__dirname, '../dist/index.html')}`;
-
-  mainWindow.loadURL(startURL);
-
-  mainWindow.webContents.on('did-finish-load', () => {
-     mainWindow.show();
-     if (isDev) mainWindow.webContents.openDevTools();
-  });
-
-  // --- PERSISTENCE LOGIC ---
-  mainWindow.on('close', (event) => {
-    if (!app.isQuitting) {
-      event.preventDefault(); // Stop the app from quitting
-      mainWindow.hide();      // Just hide the window
-    }
-    return false;
-  });
-}
-
-function createTray() {
-  // NOTE: Ensure icon.png exists in the electron/ folder or this will error
-  const iconPath = path.join(__dirname, 'icon.png'); 
-  tray = new Tray(iconPath);
-  
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show Omnix Studio', click: () => mainWindow.show() },
-    { type: 'separator' },
-    { label: 'Quit Omnix (Stop API)', click: () => {
-      app.isQuitting = true; // Set flag so the 'close' event allows it
-      app.quit();
-    }}
-  ]);
-
-  tray.setToolTip('Omnix AI Studio');
-  tray.setContextMenu(contextMenu);
-  tray.on('click', () => mainWindow.show());
-}
-
-// In main.js
-
-function startInternalServer() {
-  const isDevelopment = !app.isPackaged;
-  const serverPath = isDevelopment 
+  const serverPath = isDev 
     ? path.join(__dirname, '../server.ts')
-    : path.join(__dirname, '../dist/server.js');
+    : path.join(process.resourcesPath, 'server.ts');
   
-  if (!fsSync.existsSync(serverPath)) {
-    console.error(`CRITICAL: Server script not found at ${serverPath}`);
-    dialog.showErrorBox('Omnix Startup Error', `Internal engine script not found at expected location: ${serverPath}. Please reinstall the application.`);
-    return;
-  }
+  const tsxPath = path.join(__dirname, '../node_modules/tsx/dist/cli.mjs');
 
-  serverProcess = fork(serverPath, [], {
-    execArgv: isDevelopment ? ['--import', 'tsx'] : [],
-    env: { 
-      ...process.env, 
-      PORT: 9777, 
-      NODE_ENV: isDevelopment ? 'development' : 'production',
-      OMNIX_WORKSPACE: WORKSPACE_DIR
-    },
-    silent: true // Capture stdout/stderr
+  serverProcess = fork(serverPath, ['--silent', '--dependent-pid', process.pid.toString()], {
+    execPath: 'node',
+    execArgv: [tsxPath],
+    env: { ...process.env, NODE_ENV: isDev ? 'development' : 'production' }
   });
 
-  serverProcess.stdout.on('data', (data) => console.log(`[Engine]: ${data}`));
-  serverProcess.stderr.on('data', (data) => console.error(`[Engine Error]: ${data}`));
-  
-  serverProcess.on('message', async (request) => {
-    if (request.type === 'api-inference-request') {
-      mainWindow.webContents.send('execute-inference', request.data);
+  serverProcess.on('message', (msg) => {
+    if (msg.type === 'SPAWN_WORKER') {
+      console.log('Omnix: Server requested a compute worker spawn.');
+      createWorkerWindow();
     }
   });
 
   serverProcess.on('error', (err) => {
-    console.error('Engine process error:', err);
-    if (mainWindow) {
-      mainWindow.webContents.executeJavaScript(`console.error("Omnix Engine failed to start: ${err.message}")`);
-    }
-  });
-
-  serverProcess.on('exit', (code) => {
-    console.log(`Engine process exited with code ${code}`);
-    if (code !== 0 && code !== null) {
-      dialog.showErrorBox('Omnix Engine Error', `The local AI engine exited unexpectedly with code ${code}. UI features will be limited to browser-only mode.`);
-    }
+    console.error('Failed to start server:', err);
   });
 }
 
-ipcMain.on('inference-result', (event, { requestId, response }) => {
-  serverProcess.send({ type: 'api-inference-response', requestId, response });
-});
+let workerWindowsCount = 0;
+const MAX_WORKERS = 2;
 
-// Unrestricted RAM flags
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=16384');
-app.commandLine.appendSwitch('enable-unsafe-webgpu');
-
-// Handle CLI arguments
-const isCliMode = process.argv.some(arg => arg === '--cli' || arg === '-c');
-const hasParameters = process.argv.length > (isDev ? 2 : 1);
-
-function runCli(args) {
-  const cliPath = isDev 
-    ? path.join(__dirname, '../src/cli/index.ts')
-    : path.join(__dirname, '../dist/cli.js');
-    
-  console.log(`Executing CLI command: ${args.join(' ')}`);
-  
-  const cliProcess = fork(cliPath, args, {
-    execArgv: isDev ? ['--import', 'tsx'] : [],
-    env: { ...process.env, PORT: 9777 }
-  });
-  
-  cliProcess.on('exit', (code) => {
-    console.log(`CLI command finished with code ${code}`);
-    app.isQuitting = true;
-    app.quit();
-  });
-}
-
-app.whenReady().then(async () => {
-  // Ensure the workspace is ready BEFORE the window opens
-  await fs.mkdir(WORKSPACE_DIR, { recursive: true }).catch(console.error);
-  startInternalServer();
-  
-  if (!isCliMode && !hasParameters) {
-    createWindow();
-    createTray();
-  } else {
-    console.log("Omnix running in background/CLI mode...");
-    const userArgs = process.argv.slice(isDev ? 2 : 1).filter(a => a !== '--cli' && a !== '-c');
-    
-    // Always run CLI if explicitly requested via --cli OR if parameters are provided without UI
-    if (isCliMode || userArgs.length > 0) {
-      // Give the internal engine some time to warm up
-      setTimeout(() => runCli(userArgs), 2000);
-    }
+function createWorkerWindow() {
+  if (workerWindowsCount >= MAX_WORKERS) {
+    console.log('Omnix: Max workers reached. Skipping spawn.');
+    return;
   }
+
+  const workerWin = new BrowserWindow({
+    show: false, // HEADLESS
+    width: 200,
+    height: 200,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      offscreen: true // Use offscreen rendering for headless compute
+    },
+  });
+
+  const workerUrl = isDev ? 'http://localhost:3000?mode=worker' : `file://${path.join(__dirname, '../dist/index.html')}?mode=worker`;
   
+  if (isDev) {
+    workerWin.loadURL(workerUrl);
+  } else {
+    workerWin.loadURL(workerUrl);
+  }
+
+  workerWindowsCount++;
+
+  workerWin.on('closed', () => {
+    workerWindowsCount--;
+  });
+
+  workerWin.webContents.on('did-finish-load', () => {
+    console.log(`Omnix: Headless Compute Worker Ready. [Workers: ${workerWindowsCount}]`);
+  });
+}
+
+function createWindow() {
+  if (isWorkerMode) {
+    createWorkerWindow();
+    return;
+  }
+
+  const win = new BrowserWindow({
+    width: 1300,
+    height: 900,
+    title: "Omnix Local AI Studio",
+    backgroundColor: '#000000',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  if (isDev) {
+    win.loadURL('http://localhost:3000');
+    win.webContents.openDevTools();
+  } else {
+    win.loadFile(path.join(__dirname, '../dist/index.html'));
+  }
+}
+
+app.whenReady().then(() => {
+  startBackgroundServer();
+  createWindow();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on('before-quit', () => {
-  if (serverProcess) serverProcess.kill(); // Clean up when the user actually QUITS
-});
-
 app.on('window-all-closed', () => {
-	
-});
-
-ipcMain.handle('os:getMemoryStats', () => {
-  const total = os.totalmem();
-  const free = os.freemem();
-  const used = total - free;
-  
-  return {
-    totalMB: Math.round(total / 1024 / 1024),
-    usedMB: Math.round(used / 1024 / 1024),
-    totalGB: Math.round(total / 1024 / 1024 / 1024) 
-  };
-});
-// --- SECURE Filesystem API Handlers ---
-ipcMain.handle('fs:readDir', async (event, dirPath) => {
-  try {
-    const safePath = getSafePath(dirPath || './');
-    const files = await fs.readdir(safePath, { withFileTypes: true });
-    return files.map(f => ({ name: f.name, isDirectory: f.isDirectory() }));
-  } catch (error) {
-    return { error: error.message };
-  }
-});
-
-ipcMain.handle('fs:readFile', async (event, filePath) => {
-  try {
-    const safePath = getSafePath(filePath);
-    return await fs.readFile(safePath, 'utf-8');
-  } catch (error) {
-    return { error: error.message };
-  }
-});
-
-ipcMain.handle('fs:writeFile', async (event, filePath, content) => {
-  try {
-    const safePath = getSafePath(filePath);
-    await fs.writeFile(safePath, content, 'utf-8');
-    return { success: true };
-  } catch (error) {
-    return { error: error.message };
-  }
-});
-
-ipcMain.handle('dialog:openFile', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile', 'multiSelections']
-  });
-  return result;
+  if (process.platform !== 'darwin') app.quit();
 });
