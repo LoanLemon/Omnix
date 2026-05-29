@@ -8,17 +8,13 @@ export default defineConfig(({mode}) => {
   return {
     plugins: [react(), tailwindcss()],
     base: './',
+    exclude: ['@huggingface/transformers'],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src/gui'),
         '@shared': path.resolve(__dirname, './src/shared'),
         '@engine': path.resolve(__dirname, './src/engine'),
       },
-    },
-    server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
     },
   };
 });

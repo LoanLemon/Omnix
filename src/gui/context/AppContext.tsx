@@ -19,6 +19,8 @@ interface AppContextType {
   setMinimizeToTray: (val: boolean) => void;
   enableRelayMode: boolean;
   setEnableRelayMode: (val: boolean) => void;
+  thinkEnabled: boolean;
+  setThinkEnabled: (val: boolean) => void;
   relayActive: boolean;
   startRelayServer: () => Promise<void>;
 

@@ -6,8 +6,12 @@ If the user wants music generated, output: "music_gen"
 If the user wants a website or app generated, output: "sandbox"
 For all other prompts/text generated, output: "route_to_text"
 
-Only output one of the four valid outputs (image_gen/music_gen/sandbox/route_to_text). 
-No other outputs are valid. 
+Do NOT explain.
+Do NOT conversate.
+Do NOT answer the users prompt.
+Do NOT refuse.
+Only output the BEST of these four options: image_gen, music_gen, sandbox, route_to_text 
+Output:
 `;
 
 export const CODER_SYSTEM_PROMPT = `

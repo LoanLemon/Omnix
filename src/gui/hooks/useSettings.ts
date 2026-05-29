@@ -49,6 +49,11 @@ export function useSettings() {
     return saved === "true";
   });
 
+  const [thinkEnabled, setThinkEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_think_enabled");
+    return saved === "true";
+  });
+
   const [previousTextModel, setPreviousTextModel] = useState<string | null>(() => {
     return localStorage.getItem("omnix_prev_text_model");
   });
@@ -76,6 +81,10 @@ export function useSettings() {
   useEffect(() => {
     localStorage.setItem("omnix_enable_rag", enableRAG.toString());
   }, [enableRAG]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_think_enabled", thinkEnabled.toString());
+  }, [thinkEnabled]);
 
   useEffect(() => {
     localStorage.setItem("omnix_speak_enabled", speakEnabled.toString());
@@ -124,6 +133,8 @@ export function useSettings() {
     setIsCoderMode,
     enableRelayMode,
     setEnableRelayMode,
+    thinkEnabled,
+    setThinkEnabled,
     previousTextModel,
     setPreviousTextModel,
   };

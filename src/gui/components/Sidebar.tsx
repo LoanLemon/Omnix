@@ -46,6 +46,8 @@ export function Sidebar({
     isCoderMode,
     enableRelayMode,
     setEnableRelayMode,
+    thinkEnabled,
+    setThinkEnabled,
     relayActive,
     startRelayServer,
     workerCount,
@@ -196,10 +198,10 @@ export function Sidebar({
                         onValueChange={(val) => setSelectedModels((prev: any) => ({ ...prev, [cat]: val }))}
                         disabled={isModelLoading}
                       >
-                        <SelectTrigger className="h-7 flex-1 bg-black/20 border-border/50 text-[10px] font-mono rounded-none group hover:border-orange-500/20">
+                        <SelectTrigger className="h-7 flex-1 bg-muted/40 dark:bg-black/20 border-border/50 text-[10px] text-foreground font-mono rounded-none group hover:border-orange-500/20">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent className="bg-zinc-950 border-border/50 text-[10px] font-mono">
+                        <SelectContent className="bg-popover border border-border/50 text-popover-foreground text-[10px] font-mono shadow-md">
                           {Array.from(new Set(modelsInCategory.map(m => m.make))).map(make => (
                             <SelectGroup key={make}>
                               <SelectLabel className="text-[9px] text-muted-foreground/50 uppercase px-2 py-1 font-bold">{make}</SelectLabel>
@@ -390,6 +392,14 @@ export function Sidebar({
                   checked={enableRelayMode} 
                   onCheckedChange={setEnableRelayMode}
                   className="scale-75 data-[state=checked]:bg-yellow-600 ml-[-4px]"
+                />
+              </div>
+              <div className="space-y-2">
+                <span className="text-[8px] font-mono text-muted-foreground/50 uppercase">THINK_LOGS</span>
+                <Switch 
+                  checked={thinkEnabled} 
+                  onCheckedChange={setThinkEnabled}
+                  className="scale-75 data-[state=checked]:bg-orange-600 ml-[-4px]"
                 />
               </div>
             </div>

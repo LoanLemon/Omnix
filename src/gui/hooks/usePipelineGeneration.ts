@@ -69,7 +69,7 @@ export function usePipelineGeneration(
     stepResultsRef.current = {};
 
     // Ensure Director model is loaded
-    setSelectedModels(prev => ({ ...prev, director: "qwen-2.5-Instruct-abliterated-0.5b-q4" }));
+    setSelectedModels(prev => ({ ...prev, director: "qwen-3-0.6b-q4" }));
     
     addLog("Pipeline Start: Rooting generation sequence...", "info");
     

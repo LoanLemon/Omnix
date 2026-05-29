@@ -1,5 +1,5 @@
 {
-  "name": "Omnix",
+  "name": "Omnix v2",
   "description": "A high-performance local AI orchestration studio. Run vision, speech, and coding models privately on your device using WebGPU and Transformers.js.",
   "requestFramePermissions": [
     "display-capture",

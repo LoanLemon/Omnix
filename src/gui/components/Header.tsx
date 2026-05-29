@@ -83,10 +83,10 @@ export function Header({
           <div className="flex flex-col items-end">
             <span className="text-[8px] font-mono text-muted-foreground uppercase tracking-widest mb-0.5 opacity-50">Operational Mode</span>
             <Select value={chatMode} onValueChange={(val) => handleModeChange(val as ChatMode)}>
-              <SelectTrigger className="h-7 w-40 bg-zinc-900/50 dark:bg-black/50 border-border text-[10px] font-mono focus:ring-orange-500/30 hover:border-orange-500/30 transition-all rounded-sm">
+              <SelectTrigger className="h-7 w-40 bg-muted/30 border-border text-[10px] text-foreground font-mono focus:ring-orange-500/30 hover:border-orange-500/30 transition-all rounded-sm">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-zinc-950 border-border/50 text-[10px] font-mono">
+              <SelectContent className="bg-popover border border-border/50 text-popover-foreground text-[10px] font-mono shadow-md">
                 <SelectItem value="director" className="focus:bg-orange-500/10 focus:text-orange-500">
                   <div className="flex items-center gap-2">
                     <Zap className="w-3 h-3" />

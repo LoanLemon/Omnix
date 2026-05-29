@@ -43,6 +43,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setMinimizeToTray,
     enableRelayMode,
     setEnableRelayMode,
+    thinkEnabled,
+    setThinkEnabled,
   } = useSettings();
 
   // --- State ---
@@ -212,7 +214,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     isLiveModeRef,
     isRoutingRef,
     setIsModelLoading,
-    setLoadingProgress
+    setLoadingProgress,
+    thinkEnabled
   );
 
   const {
@@ -223,39 +226,41 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     workflow
   } = usePipelineGeneration(addLog, setSandboxFiles, setSelectedModels);
 
-  // --- Initialization: Auto-load default model ---
+  // --- Mode Sync: Auto-load or switch model based on active chat/coder mode ---
   useEffect(() => {
-    if (isRamDetected && !loadedModelId && !isModelLoading) {
-      let targetCategory = "text";
-      
-      if (isCoderMode) {
-        targetCategory = "coder";
-      } else {
-        switch (chatMode) {
-          case "director":
-            targetCategory = "director";
-            break;
-          case "image":
-            targetCategory = "image-gen";
-            break;
-          case "music":
-            targetCategory = "music-gen";
-            break;
-          case "live":
-            targetCategory = "vision";
-            break;
-          case "sandbox":
-            targetCategory = "coder";
-            break;
-          default:
-            targetCategory = "text";
-        }
-      }
+    if (!isRamDetected || isModelLoading) return;
 
-      addLog(`System: Detected ${isCoderMode ? 'Coder' : chatMode} mode. Initialization auto-load triggered.`, "info");
+    let targetCategory = "text";
+    
+    if (isCoderMode) {
+      targetCategory = "coder";
+    } else {
+      switch (chatMode) {
+        case "director":
+          targetCategory = "director";
+          break;
+        case "image":
+          targetCategory = "image-gen";
+          break;
+        case "music":
+          targetCategory = "music-gen";
+          break;
+        case "live":
+          targetCategory = "vision";
+          break;
+        case "sandbox":
+          targetCategory = "coder";
+          break;
+        default:
+          targetCategory = "text";
+      }
+    }
+
+    if (activeCategory !== targetCategory || !loadedModelId) {
+      addLog(`System: Mode switch to ${isCoderMode ? 'Coder' : chatMode} detected. Loading model for ${targetCategory}...`, "info");
       loadModel(targetCategory);
     }
-  }, [isRamDetected, loadedModelId, isModelLoading, isCoderMode, chatMode, loadModel, addLog]);
+  }, [isRamDetected, isCoderMode, chatMode, activeCategory, loadedModelId, isModelLoading, loadModel, addLog]);
 
   // Orchestrate model switching based on queues
   useInferenceOrchestrator(
@@ -393,6 +398,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     theme, setTheme,
     minimizeToTray, setMinimizeToTray,
     enableRelayMode, setEnableRelayMode,
+    thinkEnabled, setThinkEnabled,
     relayActive, startRelayServer,
     isModelLoading, isModelReady, loadingProgress, loadedModelId,
     activeCategory, selectedModels, setSelectedModels,

@@ -23,7 +23,8 @@ export function useChatLogic(
   isLiveModeRef: React.MutableRefObject<boolean>,
   isRoutingRef: React.MutableRefObject<boolean>,
   setIsModelLoading: (val: boolean) => void,
-  setLoadingProgress: React.Dispatch<React.SetStateAction<Record<string, { progress: number; status: string }>>>
+  setLoadingProgress: React.Dispatch<React.SetStateAction<Record<string, { progress: number; status: string }>>>,
+  thinkEnabled?: boolean
 ) {
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -126,6 +127,7 @@ export function useChatLogic(
           `Here are some recalled memories from past interactions to help you maintain continuous context:\n${contextNotes}`;
       }
 
+      let accumulatedText = "";
       const result = await browserEngine.runInference(
         category,
         text,
@@ -151,28 +153,76 @@ export function useChatLogic(
         (token) => {
           setIsModelLoading(false);
           setLoadingProgress({}); // Clear once we start getting tokens
-          setMessages(prev => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === "assistant") {
-              return [...prev.slice(0, -1), { ...last, content: last.content + token, isQueued: false }];
+          
+          if (category === "text" || category === "coder") {
+            accumulatedText += token;
+            let thoughts = "";
+            let cleanText = "";
+            const lowerText = accumulatedText.toLowerCase();
+            const openIdx = lowerText.indexOf("<think>");
+            if (openIdx !== -1) {
+              const closeIdx = lowerText.indexOf("</think>", openIdx + 7);
+              if (closeIdx !== -1) {
+                thoughts = accumulatedText.substring(openIdx + 7, closeIdx);
+                cleanText = accumulatedText.substring(0, openIdx) + accumulatedText.substring(closeIdx + 8);
+              } else {
+                thoughts = accumulatedText.substring(openIdx + 7);
+                cleanText = accumulatedText.substring(0, openIdx);
+              }
+            } else {
+              cleanText = accumulatedText;
             }
-            return prev;
-          });
+
+            let displayContent = "";
+            if (thinkEnabled && thoughts.trim()) {
+              displayContent = `<|channel>thought\n${thoughts.trim()}\n<channel|>\n${cleanText}`;
+            } else {
+              displayContent = cleanText;
+            }
+
+            setMessages(prev => {
+              const filtered = prev.filter(m => !m.isThinking);
+              const last = filtered[filtered.length - 1];
+              if (last && last.role === "assistant") {
+                return [...filtered.slice(0, -1), { ...last, content: displayContent, isQueued: false }];
+              }
+              return filtered;
+            });
+          } else {
+            setMessages(prev => {
+              const filtered = prev.filter(m => !m.isThinking);
+              const last = filtered[filtered.length - 1];
+              if (last && last.role === "assistant") {
+                return [...filtered.slice(0, -1), { ...last, content: last.content + token, isQueued: false }];
+              }
+              return filtered;
+            });
+          }
         }
       );
 
       if (category === "image-gen") {
-        setMessages(prev => [...prev.slice(0, -1), { role: "assistant", content: "Image generated successfully.", image: result as string }]);
+        setMessages(prev => [...prev.filter(m => !m.isThinking && !m.isQueued), { role: "assistant", content: "Image generated successfully.", image: result as string }]);
       } else if (category === "music-gen") {
-        setMessages(prev => [...prev.slice(0, -1), { role: "assistant", content: "Audio synthesized successfully.", audio: (result as any).audio }]);
+        setMessages(prev => [...prev.filter(m => !m.isThinking && !m.isQueued), { role: "assistant", content: "Audio synthesized successfully.", audio: (result as any).audio }]);
       } else {
         setMessages(prev => {
-          const last = prev[prev.length - 1];
+          const filtered = prev.filter(m => !m.isThinking);
+          const last = filtered[filtered.length - 1];
           if (last && last.role === "assistant") {
-            const finalContent = last.content || (result as string) || "";
-            return [...prev.slice(0, -1), { ...last, content: finalContent, isQueued: false }];
+            let finalContent = last.content || (result as string) || "";
+            if (category === "text" || category === "coder") {
+              finalContent = finalContent.replace(/<think>[\s\S]*?<\/think>/gi, "");
+              const thinkOpenIdx = finalContent.toLowerCase().indexOf("<think>");
+              if (thinkOpenIdx !== -1) {
+                finalContent = finalContent.substring(0, thinkOpenIdx);
+              }
+              finalContent = finalContent.replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "");
+              finalContent = finalContent.trim();
+            }
+            return [...filtered.slice(0, -1), { ...last, content: finalContent, isQueued: false }];
           }
-          return prev;
+          return filtered;
         });
       }
 
@@ -181,20 +231,28 @@ export function useChatLogic(
         // Index the user prompt and the generated AI answer asynchronously
         indexMemory(text);
         if (typeof result === "string" && result) {
-          indexMemory(result);
+          let cleanResult = result.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+          const thinkOpenIdx = cleanResult.toLowerCase().indexOf("<think>");
+          if (thinkOpenIdx !== -1) {
+            cleanResult = cleanResult.substring(0, thinkOpenIdx).trim();
+          }
+          indexMemory(cleanResult);
         }
       }
       
       addLog(`Engine: Task complete.`, "success");
     } catch (err: any) {
       addLog(`Engine Error: ${err?.message || err?.toString() || "Unknown error occurred during inference"}`, "error");
-      setMessages(prev => [...prev.slice(0, -1), { role: "assistant", content: `Error: ${err?.message || "Inference failed."}` }]);
+      setMessages(prev => {
+        const filtered = prev.filter(m => !m.isThinking);
+        return [...filtered.slice(0, -1), { role: "assistant", content: `Error: ${err?.message || "Inference failed."}` }];
+      });
     } finally {
       setIsGenerating(false);
       setIsModelLoading(false);
       setLoadingProgress({});
     }
-  }, [selectedModels, addLog, enableRAG, indexMemory, loadModel, setIsModelLoading, setLoadingProgress]);
+  }, [selectedModels, addLog, enableRAG, indexMemory, loadModel, setIsModelLoading, setLoadingProgress, thinkEnabled]);
 
   const summarizeChat = useCallback(async () => {
     addLog("Summarization logic not fully implemented yet", "info");
@@ -212,6 +270,17 @@ export function useChatLogic(
     setMessages(prev => [...prev, userMsg]);
 
     let category = currentImage ? "vision" : (isCoderMode ? "coder" : "text");
+    if (!currentImage) {
+      if (chatMode === "image") {
+        category = "image-gen";
+      } else if (chatMode === "music") {
+        category = "music-gen";
+      } else if (chatMode === "live") {
+        category = "vision";
+      } else if (chatMode === "sandbox") {
+        category = "coder";
+      }
+    }
     let finalInput = currentImage || currentInput;
     let finalOptions: any = { prompt: currentImage ? currentInput : undefined };
 
@@ -229,19 +298,51 @@ export function useChatLogic(
       });
       category = routing.category;
       finalInput = routing.prompt;
-      await browserEngine.unloadDirector();
+
+      if (thinkEnabled && routing.thinking) {
+        addLog("Director: Showing reasoning process in chat.", "info");
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: `💭 *Reasoning:* \n\n${routing.thinking}`,
+          isThinking: true
+        }]);
+      }
+
+      const targetModelId = category === "text" ? selectedModels.text : selectedModels[category];
+      const targetModelInfo = MODELS.find(m => m.id === targetModelId);
+      const isSameModel = targetModelInfo && directorInfo && (targetModelInfo.modelID === directorInfo.modelID);
+
+      if (!isSameModel) {
+        await browserEngine.unloadDirector();
+        await new Promise(resolve => setTimeout(resolve, 500)); // Let WebGPU and GC settle completely before loading next model
+      } else {
+        addLog("System: Retaining Director as active text model (bypass reload).", "info");
+      }
+      
       addLog(`System: Routed to ${category} engine by Director.`, "success");
     }
 
+    const chatHistory = [...messages, userMsg].filter(
+      (m: any) => m.role === "user" || m.role === "assistant"
+    ).slice(-10);
+
+    finalOptions.chatHistory = chatHistory;
+
     await performLocalInference(finalInput, category, finalOptions);
-  }, [input, pendingImage, isCoderMode, chatMode, performLocalInference, addLog, setIsModelLoading, setLoadingProgress]);
+  }, [input, pendingImage, isCoderMode, chatMode, performLocalInference, addLog, setIsModelLoading, setLoadingProgress, messages]);
 
   const handleSendInternal = useCallback(async (text: string, systemPrompt?: string, role: "user" | "system" = "user", hidden = false) => {
     if (!text.trim()) return;
-    if (!hidden) setMessages(prev => [...prev, { role, content: text, hidden }]);
+    const userMsg: Message = { role, content: text, hidden };
+    if (!hidden) setMessages(prev => [...prev, userMsg]);
     const cat = isCoderMode ? "coder" : "text";
-    await performLocalInference(text, cat, { systemPrompt });
-  }, [isCoderMode, performLocalInference]);
+
+    const chatHistory = [...messages, userMsg].filter(
+      (m: any) => m.role === "user" || m.role === "assistant"
+    ).slice(-10);
+
+    await performLocalInference(text, cat, { systemPrompt, chatHistory });
+  }, [isCoderMode, performLocalInference, messages]);
 
   return {
     messages,

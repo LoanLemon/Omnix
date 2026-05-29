@@ -12,13 +12,13 @@ export function useModelManagement(
   const filteredModelsList = MODELS;
 
   const [selectedModels, setSelectedModels] = useState<Record<string, string>>({
-    text: "llama-3.2-1b",
+    text: "qwen-3-0.6b-q4-text",
     vision: "FastVLM",
     stt: "whisper-tiny-en",
     tts: "kokoro-82m",
     "image-gen": "Janus-Pro-1B-ONNX",
     "music-gen": "musicgen-small",
-    director: "qwen-2.5-Instruct-abliterated-0.5b-q4",
+    director: "qwen-3-0.6b-q4",
     coder: "qwen-2.5-coder-3b-q4",
   });
   const [activeCategory, setActiveCategory] = useState<string>("director");
@@ -102,10 +102,10 @@ export function useModelManagement(
         if (possible.length > 0) {
           changed = true;
           if (cat === "text") {
-            const preferred = possible.find(m => m.id === "llama-3.2-1b");
+            const preferred = possible.find(m => m.id === "qwen-3-0.6b-q4-text");
             next[cat] = preferred ? preferred.id : possible[0].id;
           } else if (cat === "director") {
-            const preferred = possible.find(m => m.id === "qwen-2.5-Instruct-abliterated-0.5b-q4");
+            const preferred = possible.find(m => m.id === "qwen-3-0.6b-q4");
             next[cat] = preferred ? preferred.id : possible[0].id;
           } else {
             const sorted = [...possible].sort((a, b) => (b.minRam || 0) - (a.minRam || 0));

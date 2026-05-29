@@ -47,6 +47,39 @@ export const MODELS: ModelInfo[] = [
     "minRam": 1
   },
   {
+    "id": "qwen-3-0.6b-q4",
+    "modelID": "LemOneLabs/Qwen3-0.6B-ONNX",
+    "name": "Qwen 3 0.6B",
+    "description": "Next-generation ultra-lightweight Qwen model with great reasoning for routing and text tasks.",
+    "size": "~0.6GB",
+    "dtype": "q4f16",
+    "category": "director",
+    "make": "QWEN",
+    "minRam": 1
+  },
+  {
+    "id": "tiny-llm-10m",
+    "modelID": "onnx-community/Tiny-LLM-ONNX",
+    "name": "Tiny-LLM 10M",
+    "description": "An ultra-compact 10M parameter language model pretrained on 32B tokens of Fineweb dataset. Extremely fast.",
+    "size": "~25MB",
+    "dtype": "q4",
+    "category": "director",
+    "make": "Tiny-LLM",
+    "minRam": 0.5
+  },
+  {
+    "id": "qwen-3-0.6b-q4-text",
+    "modelID": "LemOneLabs/Qwen3-0.6B-ONNX",
+    "name": "Qwen 3 0.6B",
+    "description": "Next-generation ultra-lightweight Qwen model with great reasoning for text-generation and chat.",
+    "size": "~0.6GB",
+    "dtype": "q4f16",
+    "category": "text",
+    "make": "QWEN",
+    "minRam": 1
+  },
+  {
     "id": "llama-3.2-1b",
     "modelID": "LemOneLabs/Llama-3.2-1B-Instruct-ONNX",
     "name": "Llama 3.2 1B",
