@@ -80,6 +80,7 @@ export function useModelManagement(
     } catch (err: any) {
       addLog(`Engine Error: ${err.message}`, "error");
       setError(err.message);
+      setDidError(true);
       setIsModelLoading(false);
     }
   }, [selectedModels, systemRam, filteredModelsList, setError, addLog]);

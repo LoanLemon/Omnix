@@ -49,7 +49,10 @@ export function Sidebar({
     thinkEnabled,
     setThinkEnabled,
     relayActive,
+    isApiServerActive,
     startRelayServer,
+    launchApiServer,
+    shutdownApiServer,
     workerCount,
     rebootEngine,
     currentStepIndex,
@@ -268,16 +271,55 @@ export function Sidebar({
             )}
           </div>
           <div className="px-4 py-3 rounded-sm bg-zinc-900 border border-border/40 space-y-3">
-             {isElectron && !relayActive ? (
+             {isElectron ? (
                <div className="space-y-3">
-                 <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" />
-                      <p className="text-[10px] font-mono text-yellow-500 italic">Starting Relay Bridge...</p>
-                    </div>
-                    <p className="text-[8px] font-mono text-muted-foreground leading-tight">
-                      Electron is initializing the local relay server to route external requests.
-                    </p>
+                 <div className="flex items-start gap-3">
+                   <div className={`w-1.5 h-1.5 rounded-full mt-1.5 ${isApiServerActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                   <div className="space-y-1 flex-1">
+                     <p className="text-[10px] font-mono text-zinc-300">
+                       {isApiServerActive ? 'Local API Server Active' : 'Local API Server Offline'}
+                     </p>
+                     <p className="text-[8px] font-mono text-muted-foreground leading-snug">
+                       {isApiServerActive 
+                         ? "API services are listening on Port 3000 to receive and route requests from external applications." 
+                         : "The Express API server is stopped. Click below to launch to receive processing requests."}
+                     </p>
+                   </div>
+                 </div>
+                 
+                 <div className="flex gap-2 pt-1 border-t border-white/5">
+                   {isApiServerActive ? (
+                     <>
+                       <button 
+                         onClick={shutdownApiServer}
+                         className="flex-1 py-1 text-center bg-red-950/40 hover:bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-mono rounded transition-all cursor-pointer font-bold uppercase tracking-wider"
+                       >
+                         Stop API Server
+                       </button>
+                       {!relayActive && (
+                         <button 
+                           onClick={startRelayServer}
+                           className="flex-1 py-1 text-center bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-yellow-400 text-[10px] font-mono rounded transition-all cursor-pointer font-bold uppercase tracking-wider animate-pulse"
+                         >
+                           Start Relay
+                         </button>
+                       )}
+                     </>
+                   ) : (
+                     <button 
+                       onClick={launchApiServer}
+                       className="w-full py-1.5 text-center bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 text-green-400 text-[10px] font-mono rounded transition-all cursor-pointer font-bold uppercase tracking-widest"
+                     >
+                       Launch API Server
+                     </button>
+                   )}
+                 </div>
+
+                 <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[8px] font-mono">
+                    <span className="text-muted-foreground/80">SERVER_ROLE</span>
+                    <span className={`${relayActive ? 'text-amber-400 font-bold' : 'text-zinc-500'}`}>
+                      {relayActive ? 'MAIN_DESKTOP_PROCESSOR' : 'STANDALONE_LOCAL_NODE'}
+                    </span>
                  </div>
                </div>
              ) : (

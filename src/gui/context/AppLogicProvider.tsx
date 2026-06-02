@@ -127,19 +127,24 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
 
   const [workerCount, setWorkerCount] = useState(0);
   const [relayActive, setRelayActive] = useState(false);
+  const [isApiServerActive, setIsApiServerActive] = useState(false);
 
   const checkRelayStatus = useCallback(async () => {
     try {
       const resp = await fetch("/api/server/status");
       const data = await resp.json();
       setRelayActive(data.relayActive);
+      setIsApiServerActive(true);
     } catch (e) {
-      console.warn("Relay Status Check Failed:", e);
+      setRelayActive(false);
+      setIsApiServerActive(false);
     }
   }, []);
 
   useEffect(() => {
     checkRelayStatus();
+    const interval = setInterval(checkRelayStatus, 4000);
+    return () => clearInterval(interval);
   }, [checkRelayStatus]);
 
   const startRelayServer = useCallback(async () => {
@@ -160,6 +165,36 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
       addLog("System: Failed to start relay server. Ensure standalone core is running.", "error");
     }
   }, [addLog, setEnableRelayMode]);
+
+  const launchApiServer = useCallback(async () => {
+    if (isElectron && (window as any).electron?.server) {
+      addLog("System: Spawning background API server process...", "info");
+      const ok = await (window as any).electron.server.start();
+      if (ok) {
+        addLog("System: API server process spawned successfully.", "success");
+        setIsApiServerActive(true);
+        setTimeout(checkRelayStatus, 2000);
+      } else {
+        addLog("System: Failed to spawn background API server process.", "error");
+      }
+    } else {
+      addLog("System: Not in Electron environment. Cannot spawn server process.", "error");
+    }
+  }, [isElectron, addLog, checkRelayStatus]);
+
+  const shutdownApiServer = useCallback(async () => {
+    if (isElectron && (window as any).electron?.server) {
+      addLog("System: Terminating background API server process...", "info");
+      const ok = await (window as any).electron.server.stop();
+      if (ok) {
+        setIsApiServerActive(false);
+        setRelayActive(false);
+        addLog("System: API server process terminated.", "success");
+      } else {
+        addLog("System: Failed to terminate background API server process.", "error");
+      }
+    }
+  }, [isElectron, addLog]);
 
   const { isConnected, sendInference } = useSocketInference(
     addLog,
@@ -215,7 +250,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     isRoutingRef,
     setIsModelLoading,
     setLoadingProgress,
-    thinkEnabled
+    thinkEnabled,
+    setError
   );
 
   const {
@@ -226,9 +262,15 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     workflow
   } = usePipelineGeneration(addLog, setSandboxFiles, setSelectedModels);
 
+  // Reset error when mode changes explicitly
+  useEffect(() => {
+    setError(null);
+    setDidError(false);
+  }, [chatMode, isCoderMode, setError]);
+
   // --- Mode Sync: Auto-load or switch model based on active chat/coder mode ---
   useEffect(() => {
-    if (!isRamDetected || isModelLoading) return;
+    if (!isRamDetected || isModelLoading || error) return;
 
     let targetCategory = "text";
     
@@ -260,7 +302,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
       addLog(`System: Mode switch to ${isCoderMode ? 'Coder' : chatMode} detected. Loading model for ${targetCategory}...`, "info");
       loadModel(targetCategory);
     }
-  }, [isRamDetected, isCoderMode, chatMode, activeCategory, loadedModelId, isModelLoading, loadModel, addLog]);
+  }, [isRamDetected, isCoderMode, chatMode, activeCategory, loadedModelId, isModelLoading, loadModel, addLog, error]);
 
   // Orchestrate model switching based on queues
   useInferenceOrchestrator(
@@ -399,7 +441,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     minimizeToTray, setMinimizeToTray,
     enableRelayMode, setEnableRelayMode,
     thinkEnabled, setThinkEnabled,
-    relayActive, startRelayServer,
+    relayActive, isApiServerActive, startRelayServer, launchApiServer, shutdownApiServer,
     isModelLoading, isModelReady, loadingProgress, loadedModelId,
     activeCategory, selectedModels, setSelectedModels,
     workerCount, setWorkerCount,

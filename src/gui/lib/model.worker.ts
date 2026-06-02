@@ -22,6 +22,59 @@ console.warn = function (...args) {
   originalWarn.apply(console, args);
 };
 
+// WebGPU shader-int64 patch for stable execution in headless/worker Chromium contexts (like Electron).
+// In Electron, GPU capabilities (such as 64-bit integer indexing shader-int64) are often reported
+// as supported by the card/driver, but compiling them in Tint/WGSL fails inside background renderers.
+// This results in validation errors like '[Invalid ComputePipeline "Gather"]' and scrambled text.
+// Intercepting navigator.gpu to hide 'shader-int64' safely triggers the high-performance 32-bit Integer fallback.
+if (typeof globalThis !== 'undefined' && globalThis.navigator && globalThis.navigator.gpu) {
+  try {
+    const originalRequestAdapter = globalThis.navigator.gpu.requestAdapter;
+    if (typeof originalRequestAdapter === 'function') {
+      globalThis.navigator.gpu.requestAdapter = async function (options?: any) {
+        const adapter = await originalRequestAdapter.call(globalThis.navigator.gpu, options);
+        if (adapter) {
+          // Intercept requestDevice to drop 'shader-int64'
+          const originalRequestDevice = adapter.requestDevice;
+          if (typeof originalRequestDevice === 'function') {
+            adapter.requestDevice = async function (deviceDescriptor?: any) {
+              if (deviceDescriptor && deviceDescriptor.requiredFeatures) {
+                if (Array.isArray(deviceDescriptor.requiredFeatures)) {
+                  deviceDescriptor.requiredFeatures = deviceDescriptor.requiredFeatures.filter(
+                    (f: any) => f !== 'shader-int64'
+                  );
+                }
+              }
+              const device = await originalRequestDevice.call(adapter, deviceDescriptor);
+              if (device) {
+                if (device.features && typeof device.features.has === 'function') {
+                  const originalHas = device.features.has;
+                  device.features.has = function (feature: string) {
+                    if (feature === 'shader-int64') return false;
+                    return originalHas.call(device.features, feature);
+                  };
+                }
+              }
+              return device;
+            };
+          }
+          // Hide from Adapter features too
+          if (adapter.features && typeof adapter.features.has === 'function') {
+            const originalAdapterHas = adapter.features.has;
+            adapter.features.has = function (feature: string) {
+              if (feature === 'shader-int64') return false;
+              return originalAdapterHas.call(adapter.features, feature);
+            };
+          }
+        }
+        return adapter;
+      };
+    }
+  } catch (e) {
+    originalWarn("Failed to apply WebGPU shader patch in worker:", e);
+  }
+}
+
 // Worker-specific configuration for safe performance
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
@@ -32,6 +85,29 @@ if (env.backends?.onnx?.wasm) {
   env.backends.onnx.wasm.proxy = false; 
   env.backends.onnx.wasm.numThreads = 1; 
   env.backends.onnx.wasm.simd = true;
+}
+
+let cachedShaderF16Support: boolean | null = null;
+
+async function checkShaderF16Support(): Promise<boolean> {
+  if (cachedShaderF16Support !== null) return cachedShaderF16Support;
+  if (typeof navigator === 'undefined' || !navigator.gpu) {
+    cachedShaderF16Support = false;
+    return false;
+  }
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (adapter && adapter.features && typeof adapter.features.has === 'function') {
+      cachedShaderF16Support = adapter.features.has('shader-f16');
+      console.log(`📡 (Worker) WebGPU shader-f16 capability detected: ${cachedShaderF16Support}`);
+    } else {
+      cachedShaderF16Support = false;
+    }
+  } catch (e) {
+    console.warn("(Worker) Error checking shader-f16 capability:", e);
+    cachedShaderF16Support = false;
+  }
+  return cachedShaderF16Support;
 }
 
 class WorkerModelEngine {
@@ -135,18 +211,30 @@ class WorkerModelEngine {
     const dtype = info?.dtype || "q4";
     console.log(`📦 (Worker) Persistent Director Engine Dtype: ${dtype}`);
     
+    let finalDtype = dtype.toLowerCase();
+    const hasShaderF16 = await checkShaderF16Support();
+    if (!hasShaderF16) {
+      if (finalDtype === "fp16") {
+        console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to fp32 for Persistent Director`);
+        finalDtype = "fp32";
+      } else if (finalDtype === "q4f16") {
+        console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to q4 for Persistent Director`);
+        finalDtype = "q4";
+      }
+    }
+    
     try {
       this.director = await pipeline("text-generation", modelId, {
         ...options,
         device: "webgpu",
-        dtype: dtype
+        dtype: finalDtype
       });
     } catch (e) {
-      console.warn("Director WebGPU failed in worker, falling back to WASM");
+      console.warn("Director WebGPU failed in worker, falling back to WASM:", e);
       this.director = await pipeline("text-generation", modelId, {
         ...options,
         device: "wasm",
-        dtype: (dtype === "fp16" || dtype === "q8") ? "q4" : dtype
+        dtype: (finalDtype === "fp16" || finalDtype === "q8") ? "q4" : finalDtype
       });
     }
     this.directorModelId = modelId;
@@ -264,17 +352,38 @@ class WorkerModelEngine {
     const dtype = info.dtype || (info.id.includes("fp16") ? "fp16" : "q4");
     console.log(`📦 (Worker) Engine Request: ${info.name} (${category}) with ${dtype}...`);
 
+    let finalDtype = dtype.toLowerCase();
+
     const isJanus = info.id.toLowerCase().includes("janus");
+    const deviceChoice = isJanus ? {
+      prepare_inputs_embeds: 'wasm',
+      language_model: 'webgpu',
+      lm_head: 'webgpu',
+      gen_head: 'webgpu',
+      gen_img_embeds: 'webgpu',
+      image_decode: 'webgpu'
+    } : (this.isLowMemory || category === "music-gen" || category === "stt" || category === "tts" || category === "image-gen") ? "wasm" : "webgpu";
+
+    // Check shader-f16 capability if Device is WebGPU (fully or partially)
+    const isUsingWebGPU = (typeof deviceChoice === "string" && deviceChoice === "webgpu") || 
+                          (typeof deviceChoice === "object" && Object.values(deviceChoice).includes("webgpu"));
+
+    if (isUsingWebGPU) {
+      const hasShaderF16 = await checkShaderF16Support();
+      if (!hasShaderF16) {
+        if (finalDtype === "fp16") {
+          console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to fp32 for ${info.name}`);
+          finalDtype = "fp32";
+        } else if (finalDtype === "q4f16") {
+          console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to q4 for ${info.name}`);
+          finalDtype = "q4";
+        }
+      }
+    }
+
     const commonOptions: any = {
-      device: isJanus ? {
-        prepare_inputs_embeds: 'wasm',
-        language_model: 'webgpu',
-        lm_head: 'webgpu',
-        gen_head: 'webgpu',
-        gen_img_embeds: 'webgpu',
-        image_decode: 'webgpu'
-      } : (this.isLowMemory || category === "music-gen" || category === "stt" || category === "tts" || category === "image-gen") ? "wasm" : "webgpu",
-      dtype: dtype,
+      device: deviceChoice,
+      dtype: finalDtype,
       progress_callback: (p: any) => {
         if (sendProgress) sendProgress(p);
       }
@@ -328,7 +437,11 @@ class WorkerModelEngine {
         errMsg.includes("OOM") ||
         errMsg.includes("Unexpected internal error");
 
-      const isWebGPUError = commonOptions.device === "webgpu" && (
+      const isDeviceWebGPU = typeof commonOptions.device === "string" 
+        ? commonOptions.device === "webgpu"
+        : (typeof commonOptions.device === "object" && Object.values(commonOptions.device).includes("webgpu"));
+
+      const isWebGPUError = isDeviceWebGPU && (
         !navigator.gpu ||
         errMsg.toLowerCase().includes("webgpu") ||
         errMsg.toLowerCase().includes("adapter") ||
@@ -338,7 +451,13 @@ class WorkerModelEngine {
         errMsg.toLowerCase().includes("unsupported") ||
         errMsg.toLowerCase().includes("not supported") ||
         errMsg.toLowerCase().includes("not authorized") ||
-        errMsg.toLowerCase().includes("permission")
+        errMsg.toLowerCase().includes("permission") ||
+        errMsg.toLowerCase().includes("wgsl") ||
+        errMsg.toLowerCase().includes("shader") ||
+        errMsg.toLowerCase().includes("computepipeline") ||
+        errMsg.toLowerCase().includes("gather") ||
+        errMsg.toLowerCase().includes("f16") ||
+        errMsg.toLowerCase().includes("validation error")
       );
 
       if (isMemoryFault || isWebGPUError) {
@@ -355,7 +474,7 @@ class WorkerModelEngine {
         }
         
         commonOptions.device = "wasm";
-        if (dtype === "fp16" || dtype === "q8") {
+        if (finalDtype === "fp16" || finalDtype === "q8") {
           commonOptions.dtype = "q4"; // FP16/q8 on WebAssembly can be slow/unsupported, fallback to q4
         }
         try {

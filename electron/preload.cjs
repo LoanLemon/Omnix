@@ -9,6 +9,11 @@ contextBridge.exposeInMainWorld('electron', {
   os: {
     getMemoryStats: () => ipcRenderer.invoke('os:getMemoryStats')
   },
+  server: {
+    start: () => ipcRenderer.invoke('server:start'),
+    stop: () => ipcRenderer.invoke('server:stop'),
+    isStarted: () => ipcRenderer.invoke('server:isStarted'),
+  },
   dialog: {
     openFile: () => ipcRenderer.invoke('dialog:openFile'),
   },

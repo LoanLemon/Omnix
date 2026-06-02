@@ -24,7 +24,8 @@ export function useChatLogic(
   isRoutingRef: React.MutableRefObject<boolean>,
   setIsModelLoading: (val: boolean) => void,
   setLoadingProgress: React.Dispatch<React.SetStateAction<Record<string, { progress: number; status: string }>>>,
-  thinkEnabled?: boolean
+  thinkEnabled?: boolean,
+  setError?: (msg: string | null) => void
 ) {
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -247,12 +248,15 @@ export function useChatLogic(
         const filtered = prev.filter(m => !m.isThinking);
         return [...filtered.slice(0, -1), { role: "assistant", content: `Error: ${err?.message || "Inference failed."}` }];
       });
+      if (setError) {
+        setError(err?.message || String(err));
+      }
     } finally {
       setIsGenerating(false);
       setIsModelLoading(false);
       setLoadingProgress({});
     }
-  }, [selectedModels, addLog, enableRAG, indexMemory, loadModel, setIsModelLoading, setLoadingProgress, thinkEnabled]);
+  }, [selectedModels, addLog, enableRAG, indexMemory, loadModel, setIsModelLoading, setLoadingProgress, thinkEnabled, setError]);
 
   const summarizeChat = useCallback(async () => {
     addLog("Summarization logic not fully implemented yet", "info");
@@ -284,52 +288,62 @@ export function useChatLogic(
     let finalInput = currentImage || currentInput;
     let finalOptions: any = { prompt: currentImage ? currentInput : undefined };
 
-    if (chatMode === "director" && !currentImage) {
-      addLog("System: Engaging Director for task routing...", "info");
-      const directorInfo = MODELS.find(m => m.id === selectedModels.director);
-      const routing = await browserEngine.runDirectorInference(currentInput, directorInfo?.modelID, (p) => {
-        if (p.status === "progress") {
-          setIsModelLoading(true);
-          setLoadingProgress(prev => ({
-            ...prev,
-            [p.file]: { progress: p.progress, status: `Downloading Director...` }
-          }));
+    try {
+      if (chatMode === "director" && !currentImage) {
+        addLog("System: Engaging Director for task routing...", "info");
+        const directorInfo = MODELS.find(m => m.id === selectedModels.director);
+        const routing = await browserEngine.runDirectorInference(currentInput, directorInfo?.modelID, (p) => {
+          if (p.status === "progress") {
+            setIsModelLoading(true);
+            setLoadingProgress(prev => ({
+              ...prev,
+              [p.file]: { progress: p.progress, status: `Downloading Director...` }
+            }));
+          }
+        });
+        category = routing.category;
+        finalInput = routing.prompt;
+
+        if (thinkEnabled && routing.thinking) {
+          addLog("Director: Showing reasoning process in chat.", "info");
+          setMessages(prev => [...prev, {
+            role: "assistant",
+            content: `💭 *Reasoning:* \n\n${routing.thinking}`,
+            isThinking: true
+          }]);
         }
-      });
-      category = routing.category;
-      finalInput = routing.prompt;
 
-      if (thinkEnabled && routing.thinking) {
-        addLog("Director: Showing reasoning process in chat.", "info");
-        setMessages(prev => [...prev, {
-          role: "assistant",
-          content: `💭 *Reasoning:* \n\n${routing.thinking}`,
-          isThinking: true
-        }]);
+        const targetModelId = category === "text" ? selectedModels.text : selectedModels[category];
+        const targetModelInfo = MODELS.find(m => m.id === targetModelId);
+        const isSameModel = targetModelInfo && directorInfo && (targetModelInfo.modelID === directorInfo.modelID);
+
+        if (!isSameModel) {
+          await browserEngine.unloadDirector();
+          await new Promise(resolve => setTimeout(resolve, 500)); // Let WebGPU and GC settle completely before loading next model
+        } else {
+          addLog("System: Retaining Director as active text model (bypass reload).", "info");
+        }
+        
+        addLog(`System: Routed to ${category} engine by Director.`, "success");
       }
 
-      const targetModelId = category === "text" ? selectedModels.text : selectedModels[category];
-      const targetModelInfo = MODELS.find(m => m.id === targetModelId);
-      const isSameModel = targetModelInfo && directorInfo && (targetModelInfo.modelID === directorInfo.modelID);
+      const chatHistory = [...messages, userMsg].filter(
+        (m: any) => m.role === "user" || m.role === "assistant"
+      ).slice(-10);
 
-      if (!isSameModel) {
-        await browserEngine.unloadDirector();
-        await new Promise(resolve => setTimeout(resolve, 500)); // Let WebGPU and GC settle completely before loading next model
-      } else {
-        addLog("System: Retaining Director as active text model (bypass reload).", "info");
+      finalOptions.chatHistory = chatHistory;
+
+      await performLocalInference(finalInput, category, finalOptions);
+    } catch (err: any) {
+      addLog(`System/Director Error: ${err?.message || err?.toString()}`, "error");
+      if (setError) {
+        setError(err?.message || String(err));
       }
-      
-      addLog(`System: Routed to ${category} engine by Director.`, "success");
+      setIsGenerating(false);
+      setIsModelLoading(false);
+      setLoadingProgress({});
     }
-
-    const chatHistory = [...messages, userMsg].filter(
-      (m: any) => m.role === "user" || m.role === "assistant"
-    ).slice(-10);
-
-    finalOptions.chatHistory = chatHistory;
-
-    await performLocalInference(finalInput, category, finalOptions);
-  }, [input, pendingImage, isCoderMode, chatMode, performLocalInference, addLog, setIsModelLoading, setLoadingProgress, messages]);
+  }, [input, pendingImage, isCoderMode, chatMode, performLocalInference, addLog, setIsModelLoading, setLoadingProgress, messages, setError, selectedModels]);
 
   const handleSendInternal = useCallback(async (text: string, systemPrompt?: string, role: "user" | "system" = "user", hidden = false) => {
     if (!text.trim()) return;

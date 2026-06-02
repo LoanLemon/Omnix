@@ -22,7 +22,10 @@ interface AppContextType {
   thinkEnabled: boolean;
   setThinkEnabled: (val: boolean) => void;
   relayActive: boolean;
+  isApiServerActive: boolean;
   startRelayServer: () => Promise<void>;
+  launchApiServer: () => Promise<void>;
+  shutdownApiServer: () => Promise<void>;
 
   // Model State
   isModelLoading: boolean;
