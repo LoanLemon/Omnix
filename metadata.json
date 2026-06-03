@@ -1,11 +1,8 @@
 {
-  "name": "Omnix v2",
+  "name": "Omnix v3",
   "description": "A high-performance local AI orchestration studio. Run vision, speech, and coding models privately on your device using WebGPU and Transformers.js.",
   "requestFramePermissions": [
     "display-capture",
     "microphone"
-  ],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

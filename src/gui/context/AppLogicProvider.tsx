@@ -107,6 +107,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     selectedModels,
     setSelectedModels,
     activeCategory,
+    setActiveCategory,
     isModelLoading,
     setIsModelLoading,
     isModelReady,
@@ -119,11 +120,48 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     isCategoryDisabled
   } = useModelManagement(systemRam, isRamDetected, addLog, setError, setDidError);
 
+  useEffect(() => {
+    const unsubscribe = browserEngine.subscribe(() => {
+      const modelId = browserEngine.getCurrentModelId();
+      if (!modelId) {
+        setIsModelReady(false);
+        setLoadedModelId(null);
+      } else {
+        const parts = modelId.split(":");
+        const category = parts[0];
+        const id = parts[1] || parts[0];
+        setLoadedModelId(id);
+        setIsModelReady(true);
+        setActiveCategory(category);
+        setSelectedModels(prev => ({ ...prev, [category]: id }));
+      }
+    });
+
+    browserEngine.onIdleUnload(() => {
+      addLog("System: Active models unloaded due to 10 minutes of inactivity.", "info");
+    });
+
+    return () => {
+      unsubscribe();
+      browserEngine.onIdleUnload(null);
+    };
+  }, [setIsModelReady, setLoadedModelId, setActiveCategory, setSelectedModels, addLog]);
+
   const [safeMode, setSafeMode] = useState(false);
   useEffect(() => {
     browserEngine.setSafeMode(safeMode);
     if (safeMode) addLog("Engine: Safe Mode Engaged (Single-thread WASM/No-Cache)", "info");
   }, [safeMode, addLog]);
+
+  // Synchronize background server logs from Electron main process via contextBridge/IPC
+  useEffect(() => {
+    if (isElectron && (window as any).electron?.onServerLog) {
+      const unsubscribe = (window as any).electron.onServerLog((logData: { text: string; type: "info" | "error" | "success" }) => {
+        addLog(logData.text, logData.type || "info");
+      });
+      return unsubscribe;
+    }
+  }, [isElectron, addLog]);
 
   const [workerCount, setWorkerCount] = useState(0);
   const [relayActive, setRelayActive] = useState(false);
@@ -196,14 +234,14 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     }
   }, [isElectron, addLog]);
 
-  const { isConnected, sendInference } = useSocketInference(
+  const { isConnected, sendInference, activeAuthRequest, respondToAuth } = useSocketInference(
     addLog,
     setIsModelReady,
     setIsModelLoading,
     setMessages,
     setLoadingProgress,
     setWorkerCount,
-    enableRelayMode
+    enableRelayMode || isElectron
   );
 
   const {
@@ -463,6 +501,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     safeMode, setSafeMode,
     showSidebar, setShowSidebar,
     isConnected,
+    activeAuthRequest, respondToAuth,
     sandboxFiles, setSandboxFiles,
     activeTab, setActiveTab,
     generatedImage, setGeneratedImage,

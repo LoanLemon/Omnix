@@ -13,6 +13,18 @@ export function useSocketInference(
 ) {
   const socketRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [activeAuthRequest, setActiveAuthRequest] = useState<{ authId: string; webdomain: string; category: string } | null>(null);
+
+  const respondToAuth = useCallback((authId: string, decision: "once" | "always" | "never") => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        type: "AUTHORIZATION_RESPONSE",
+        authId,
+        decision
+      }));
+    }
+    setActiveAuthRequest(null);
+  }, []);
 
   useEffect(() => {
     if (!enableRelayMode) {
@@ -32,6 +44,9 @@ export function useSocketInference(
       const host = window.location.host;
       const protocol = window.location.protocol;
       
+      const isElectron = typeof window !== "undefined" && !!(window as any).electron;
+      const electronPort = isElectron ? (window as any).electron.server.getPort() : '9777';
+      
       let wsUrl: string;
       if (origin && origin.startsWith('http')) {
         const baseWs = origin.replace(/^http/, 'ws');
@@ -40,7 +55,7 @@ export function useSocketInference(
         const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
         wsUrl = `${wsProtocol}//${host}/ws-active-compute`;
       } else {
-        wsUrl = 'ws://127.0.0.1:3000/ws-active-compute';
+        wsUrl = `ws://127.0.0.1:${electronPort}/ws-active-compute`;
       }
 
       console.log(`🔌 WebSocket Connection: ${wsUrl}`);
@@ -82,10 +97,68 @@ export function useSocketInference(
           return;
         }
 
+        if (type === "AUTHORIZATION_REQUEST") {
+          const { authId, webdomain, category } = payload;
+          addLog(`🔐 Security prompt: authorization requested from external site ${webdomain}!`, "info");
+          setActiveAuthRequest({ authId, webdomain, category });
+          return;
+        }
+
         if (type === "REMOTE_TASK") {
           addLog(`🌐 Remote Task Received: ${category}`, "info");
           activeTaskCount++;
           socket.send(JSON.stringify({ type: "STATUS_UPDATE", activeTasks: activeTaskCount }));
+
+          const isNormalRequest = !options?.reqId;
+
+          if (isNormalRequest) {
+            let promptText = "";
+            let promptImage: string | undefined = undefined;
+
+            switch (category) {
+              case "text":
+                promptText = input;
+                break;
+              case "director":
+                promptText = `[Director Routing Request] ${input}`;
+                break;
+              case "vision":
+                promptText = options?.prompt || "Analyze this image";
+                promptImage = input;
+                break;
+              case "image-gen":
+                promptText = `Generate image: ${input}`;
+                break;
+              case "music-gen":
+                promptText = `Generate music: ${input}`;
+                break;
+              case "stt":
+                promptText = `[Speech to Text Transcribe Request]`;
+                break;
+              case "tts":
+                promptText = `Speak: ${input}`;
+                break;
+              default:
+                promptText = `[${category}] ${typeof input === "string" ? input : "Inference payload"}`;
+                break;
+            }
+
+            const userMsg = {
+              id: `remote-user-${requestId}`,
+              role: "user" as const,
+              content: promptText,
+              image: promptImage
+            };
+
+            const assistantMsg = {
+              id: `remote-assistant-${requestId}`,
+              role: "assistant" as const,
+              content: "Thinking...",
+              isQueued: true
+            };
+
+            setMessages(prev => [...prev, userMsg, assistantMsg]);
+          }
 
           try {
             setIsModelLoading(true);
@@ -127,9 +200,52 @@ export function useSocketInference(
             
             socket.send(JSON.stringify({ type: "TASK_RESULT", requestId, output: result }));
             addLog(`✅ Remote Task Completed: ${requestId.substring(0, 8)}`, "success");
+
+            if (isNormalRequest) {
+              setMessages(prev => prev.map(msg => {
+                if (msg.id === `remote-assistant-${requestId}`) {
+                  const updated = {
+                    ...msg,
+                    isQueued: false,
+                    content: ""
+                  } as any;
+                  if (category === "image-gen") {
+                    updated.content = "Image generated successfully.";
+                    updated.image = result;
+                  } else if (category === "music-gen") {
+                    updated.content = "Audio synthesized successfully.";
+                    updated.audio = result.audio;
+                  } else if (category === "tts") {
+                    updated.content = "Speech synthesized successfully.";
+                    updated.audio = result.audioUrl || result.audio;
+                  } else if (category === "stt") {
+                    updated.content = result.text || result;
+                  } else if (category === "director") {
+                    updated.content = `Routed intent: ${result.intent || JSON.stringify(result)}`;
+                  } else {
+                    updated.content = typeof result === "string" ? result : (result.response || JSON.stringify(result));
+                  }
+                  return updated;
+                }
+                return msg;
+              }));
+            }
           } catch (err: any) {
             addLog(`❌ Remote Task Failed: ${err?.message || String(err)}`, "error");
             socket.send(JSON.stringify({ type: "TASK_RESULT", requestId, error: err?.message || String(err) }));
+
+            if (isNormalRequest) {
+              setMessages(prev => prev.map(msg => {
+                if (msg.id === `remote-assistant-${requestId}`) {
+                  return {
+                    ...msg,
+                    isQueued: false,
+                    content: `Error: ${err?.message || String(err)}`
+                  };
+                }
+                return msg;
+              }));
+            }
           } finally {
             activeTaskCount = Math.max(0, activeTaskCount - 1);
             socket.send(JSON.stringify({ type: "STATUS_UPDATE", activeTasks: activeTaskCount }));
@@ -164,5 +280,5 @@ export function useSocketInference(
     }
   }, [isConnected]);
 
-  return { isConnected, sendInference };
+  return { isConnected, sendInference, activeAuthRequest, respondToAuth };
 }

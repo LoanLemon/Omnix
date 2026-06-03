@@ -13,7 +13,7 @@ program
   .option("-c, --category <type>", "Model category", "text")
   .action(async (prompt, options) => {
     console.log("Thinking...");
-    const response = await fetch("http://localhost:7770/api/text", {
+    const response = await fetch("http://localhost:9777/api/text", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt, category: options.category })

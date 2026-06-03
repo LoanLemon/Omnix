@@ -87,6 +87,8 @@ interface AppContextType {
   isConnected: boolean;
   workerCount: number;
   setWorkerCount: (val: number) => void;
+  activeAuthRequest: { authId: string; webdomain: string; category: string } | null;
+  respondToAuth: (authId: string, decision: "once" | "always" | "never") => void;
 
   // Sandbox & Media
   sandboxFiles: SandboxFile[];

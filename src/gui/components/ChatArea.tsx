@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Message } from "@shared/types";
+import React, { useState } from "react";
 import type { RefObject } from "react";
+import { ChevronDown, ChevronUp, Brain } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 
 interface ChatAreaProps {
@@ -78,9 +80,81 @@ export function ChatArea({
     ? Math.round(Object.values(loadingProgress).reduce((acc, curr) => acc + (curr.progress || 0), 0) / Object.values(loadingProgress).length)
     : 0;
 
+  const [isThinkExpanded, setIsThinkExpanded] = useState(true);
+
+  const extractThoughts = (content: string): { thoughts: string; cleanContent: string } | null => {
+    const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/i;
+    const thinkMatch = content.match(thinkRegex);
+    if (thinkMatch) {
+      const thoughts = thinkMatch[1].trim();
+      const cleanContent = content.replace(thinkRegex, "").trim();
+      return { thoughts, cleanContent };
+    }
+
+    const thoughtMatch = content.match(/<\|channel>thought\n([\s\S]*?)(?:<channel\|>|$)/);
+    if (thoughtMatch) {
+      const thoughts = thoughtMatch[1].trim();
+      const cleanContent = content.replace(thoughtMatch[0], "").trim();
+      return { thoughts, cleanContent };
+    }
+
+    return null;
+  };
+
+  const latestThoughtMsg = [...messages]
+    .reverse()
+    .find(m => m.role === "assistant" && (m.content.includes("<think>") || m.content.includes("<|channel>thought")));
+
+  const thoughtData = latestThoughtMsg ? extractThoughts(latestThoughtMsg.content) : null;
+
   return (
     <main className="flex-1 flex flex-col bg-background relative overflow-hidden h-full">
       <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]" />
+
+      {thoughtData && (
+        <div className="border-b border-border/30 bg-muted/10 backdrop-blur-md shrink-0 transition-all duration-300">
+          <div className="max-w-2xl mx-auto px-6 py-2.5 flex items-center justify-between select-none">
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Brain className="w-3.5 h-3.5 text-orange-500" />
+                <div className="absolute -inset-0.5 bg-orange-500/20 blur-sm rounded-full animate-pulse" />
+              </div>
+              <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-zinc-400">
+                Orchestrator_Thinking_Process
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="w-6 h-6 rounded-md text-zinc-500 hover:text-orange-500 hover:bg-zinc-800/50"
+              onClick={() => setIsThinkExpanded(!isThinkExpanded)}
+            >
+              {isThinkExpanded ? (
+                <ChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+            </Button>
+          </div>
+          <AnimatePresence initial={false}>
+            {isThinkExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="max-w-2xl mx-auto px-6 pb-4 pt-1 font-mono">
+                  <div className="p-3 bg-zinc-950/50 border border-border/30 rounded-lg text-[11px] leading-relaxed text-zinc-400 max-h-36 overflow-y-auto whitespace-pre-wrap selection:bg-orange-500/30">
+                    {thoughtData.thoughts}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
       
       <div className="flex-1 overflow-hidden">
         <ScrollArea className="h-full" ref={scrollRef} viewportProps={{ onScroll }}>
@@ -95,7 +169,7 @@ export function ChatArea({
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <h2 className="text-2xl font-mono font-bold tracking-tighter uppercase text-foreground">Omnix_Studio_v0.2</h2>
+                  <h2 className="text-2xl font-mono font-bold tracking-tighter uppercase text-foreground">Omnix_Studio_v0.4</h2>
                   <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-[0.3em] opacity-40">Orchestration_Interface</p>
                 </div>
               </div>
@@ -182,10 +256,8 @@ export function ChatArea({
                     )}
                     <div className="markdown-content relative z-10 selection:bg-orange-500/30">
                       {(() => {
-                        const thoughtMatch = msg.content.match(/<\|channel>thought\n([\s\S]*?)<channel\|>/);
-                        if (thoughtMatch) {
-                          const thought = thoughtMatch[1];
-                          const rest = msg.content.replace(thoughtMatch[0], "").trim();
+                        const parsed = extractThoughts(msg.content);
+                        if (parsed) {
                           return (
                             <div className="space-y-4">
                               <div className="p-3 bg-muted/80 border border-border rounded-lg text-xs text-muted-foreground italic font-mono">
@@ -193,9 +265,9 @@ export function ChatArea({
                                   <Sparkles className="w-3 h-3" />
                                   Reasoning
                                 </div>
-                                {thought}
+                                {parsed.thoughts}
                               </div>
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{rest}</ReactMarkdown>
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{parsed.cleanContent}</ReactMarkdown>
                             </div>
                           );
                         }

@@ -90,37 +90,37 @@ export function Header({
                 <SelectItem value="director" className="focus:bg-orange-500/10 focus:text-orange-500">
                   <div className="flex items-center gap-2">
                     <Zap className="w-3 h-3" />
-                    [0x0] DIRECTOR_AUTO
+                    Director Auto
                   </div>
                 </SelectItem>
                 <SelectItem value="text" className="focus:bg-blue-500/10 focus:text-blue-500">
                   <div className="flex items-center gap-2">
                     <Bot className="w-3 h-3" />
-                    [0x1] LLM_TEXT_SYNC
+                    LLM Text Sync
                   </div>
                 </SelectItem>
                 <SelectItem value="image" className="focus:bg-purple-500/10 focus:text-purple-500">
                   <div className="flex items-center gap-2">
                     <ImageIcon className="w-3 h-3" />
-                    [0x2] FLUX_IMAGE_GEN
+                    Flux Image Gen
                   </div>
                 </SelectItem>
                 <SelectItem value="music" className="focus:bg-pink-500/10 focus:text-pink-500">
                   <div className="flex items-center gap-2">
                     <Music className="w-3 h-3" />
-                    [0x3] SONIC_MUSIC_GEN
+                    Sonic Music Gen
                   </div>
                 </SelectItem>
                 <SelectItem value="sandbox" className="focus:bg-green-500/10 focus:text-green-500">
                   <div className="flex items-center gap-2">
                     <Code2 className="w-3 h-3" />
-                    [0x4] CODER_SANDBOX
+                    Coder Sandbox
                   </div>
                 </SelectItem>
                 <SelectItem value="live" className="focus:bg-red-500/10 focus:text-red-500">
                   <div className="flex items-center gap-2">
                     <Monitor className="w-3 h-3" />
-                    [0x5] REALTIME_LIVE
+                    Realtime Live
                   </div>
                 </SelectItem>
               </SelectContent>

@@ -281,7 +281,7 @@ export function Sidebar({
                      </p>
                      <p className="text-[8px] font-mono text-muted-foreground leading-snug">
                        {isApiServerActive 
-                         ? "API services are listening on Port 3000 to receive and route requests from external applications." 
+                         ? `API services are listening on Port ${isElectron && (window as any).electron?.server?.getPort ? (window as any).electron.server.getPort() : '9777'} to receive and route requests from external applications.` 
                          : "The Express API server is stopped. Click below to launch to receive processing requests."}
                      </p>
                    </div>

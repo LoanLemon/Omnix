@@ -1,5 +1,41 @@
 import { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
+import fs from "fs";
+import path from "path";
+
+interface PendingAuth {
+  resolve: (allowed: boolean) => void;
+  webdomain: string;
+  category: string;
+}
+
+const pendingAuths = new Map<string, PendingAuth>();
+const reqIdChatHistories = new Map<string, Array<{ role: "system" | "user" | "assistant"; content: string }>>();
+const allowedOnceGrace = new Set<string>();
+
+const PERMISSIONS_FILE = path.join(process.cwd(), "permissions.json");
+let permissions: Record<string, "allow" | "deny"> = {};
+
+function loadPermissions() {
+  try {
+    if (fs.existsSync(PERMISSIONS_FILE)) {
+      permissions = JSON.parse(fs.readFileSync(PERMISSIONS_FILE, "utf-8"));
+    }
+  } catch (e) {
+    console.warn("⚠️ permissions.json not found or corrupted, starting with clean rules.");
+  }
+}
+
+function savePermissions() {
+  try {
+    fs.writeFileSync(PERMISSIONS_FILE, JSON.stringify(permissions, null, 2), "utf-8");
+  } catch (e) {
+    console.error("❌ Failed to save domain permissions:", e);
+  }
+}
+
+// Initial load of server permissions
+loadPermissions();
 
 interface Worker {
   id: string;
@@ -149,6 +185,30 @@ export function setupWebSockets(server: any) {
           }
         }
 
+        if (type === "AUTHORIZATION_RESPONSE") {
+          const { authId, decision } = payload;
+          const pending = pendingAuths.get(authId);
+          if (pending) {
+            console.log(`👤 User responded to API request authorization from domain (${pending.webdomain}): ${decision}`);
+            if (decision === "always") {
+              permissions[pending.webdomain] = "allow";
+              savePermissions();
+              pending.resolve(true);
+            } else if (decision === "once") {
+              if (pending.category === "health") {
+                allowedOnceGrace.add(pending.webdomain);
+                console.log(`🎁 Temp grace access set for domain: ${pending.webdomain}`);
+              }
+              pending.resolve(true);
+            } else {
+              permissions[pending.webdomain] = "deny";
+              savePermissions();
+              pending.resolve(false);
+            }
+            pendingAuths.delete(authId);
+          }
+        }
+
         if (type === "TASK_RESULT") {
           if (currentWorker) {
             currentWorker.activeTasks = Math.max(0, currentWorker.activeTasks - 1);
@@ -251,9 +311,92 @@ function processQueue() {
 }
 
 export async function dispatchTask(category: string, input: any, options: any = {}): Promise<any> {
+  const reqId = options.reqId;
+  if (reqId && (category === "text" || category === "vision")) {
+    const history = reqIdChatHistories.get(reqId) || [];
+    const chatHistory = [...history, { role: "user" as const, content: category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : JSON.stringify(input)) }];
+    options.chatHistory = chatHistory;
+    console.log(`💬 Injected ${history.length} isolation history nodes for reqId: ${reqId}`);
+  }
+
   // Backpressure limit
   if (taskQueue.length >= MAX_QUEUE_SIZE) {
     throw new Error("System High-Load: Task queue is full. Please try again later.");
+  }
+
+  // --- External Requester Permission Checks ---
+  const origin = options.origin;
+  let webdomain = "";
+  if (origin && origin !== "unknown") {
+    try {
+      const url = new URL(origin);
+      webdomain = url.hostname;
+    } catch (e) {
+      webdomain = origin;
+    }
+  }
+
+  const isLocal = !webdomain || webdomain === "localhost" || webdomain === "127.0.0.1" || webdomain === "::1";
+
+  if (!isLocal) {
+    if (permissions[webdomain] === "deny") {
+      throw new Error(`Inbound request blocked: Access from domain '${webdomain}' has been denied by policy.`);
+    }
+
+    if (permissions[webdomain] !== "allow") {
+      if (allowedOnceGrace.has(webdomain)) {
+        console.log(`🎁 Using temp grace access for domain: ${webdomain}`);
+        allowedOnceGrace.delete(webdomain);
+      } else {
+        console.log(`🔐 Inbound API request from external domain '${webdomain}' detected. Prompting user...`);
+        const authId = uuidv4();
+        
+        const approved = await new Promise<boolean>((resolveAuth) => {
+          const timeout = setTimeout(() => {
+            if (pendingAuths.has(authId)) {
+              console.log(`⏳ Authorization prompt from '${webdomain}' timed out.`);
+              pendingAuths.delete(authId);
+              resolveAuth(false);
+            }
+          }, 60000);
+
+          pendingAuths.set(authId, {
+            resolve: (val) => {
+              clearTimeout(timeout);
+              resolveAuth(val);
+            },
+            webdomain,
+            category
+          });
+
+          // Broadcast authorization request message to GUI clients
+          if (workers.length === 0) {
+            console.log(`⚠️ No active GUI workers connected to authorize request from '${webdomain}'`);
+            clearTimeout(timeout);
+            pendingAuths.delete(authId);
+            resolveAuth(false);
+            return;
+          }
+
+          const msg = JSON.stringify({
+            type: "AUTHORIZATION_REQUEST",
+            authId,
+            webdomain,
+            category
+          });
+
+          workers.forEach((w) => {
+            if (w.ws && w.ws.readyState === 1) {
+              w.ws.send(msg);
+            }
+          });
+        });
+
+        if (!approved) {
+          throw new Error(`Inbound request blocked: Permission from domain '${webdomain}' was rejected.`);
+        }
+      }
+    }
   }
 
   if (workers.length === 0) {
@@ -278,7 +421,27 @@ export async function dispatchTask(category: string, input: any, options: any = 
       category, 
       input, 
       options, 
-      resolve: (data: any) => { clearTimeout(queueTimeout); resolve(data); }, 
+      resolve: (data: any) => { 
+        clearTimeout(queueTimeout); 
+        if (reqId && (category === "text" || category === "vision")) {
+          const history = reqIdChatHistories.get(reqId) || [];
+          const userContent = category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : JSON.stringify(input));
+          let assistantContent = "";
+          if (typeof data === "string") {
+            assistantContent = data;
+          } else if (data && typeof data === "object") {
+            assistantContent = data.response || JSON.stringify(data);
+          }
+          history.push({ role: "user", content: userContent });
+          history.push({ role: "assistant", content: assistantContent });
+          if (history.length > 30) {
+            history.splice(0, history.length - 30);
+          }
+          reqIdChatHistories.set(reqId, history);
+          console.log(`📝 Appended interaction to isolated history for reqId: ${reqId} (new len: ${history.length})`);
+        }
+        resolve(data); 
+      }, 
       reject: (err: any) => { clearTimeout(queueTimeout); reject(err); }, 
       requestId,
       priority: options.priority || 0,
@@ -287,4 +450,79 @@ export async function dispatchTask(category: string, input: any, options: any = 
     });
     processQueue();
   });
+}
+
+export async function handleHealthCheck(origin: string): Promise<{ allowed: boolean; error?: string }> {
+  let webdomain = "";
+  if (origin && origin !== "unknown") {
+    try {
+      const url = new URL(origin);
+      webdomain = url.hostname;
+    } catch (e) {
+      webdomain = origin;
+    }
+  }
+
+  const isLocal = !webdomain || webdomain === "localhost" || webdomain === "127.0.0.1" || webdomain === "::1";
+
+  if (isLocal) {
+    return { allowed: true };
+  }
+
+  if (permissions[webdomain] === "deny") {
+    return { allowed: false, error: `Inbound request blocked: Access from domain '${webdomain}' has been denied by policy.` };
+  }
+
+  if (permissions[webdomain] === "allow" || allowedOnceGrace.has(webdomain)) {
+    return { allowed: true };
+  }
+
+  console.log(`🔐 Inbound health check request from external domain '${webdomain}' detected. Prompting user...`);
+  const authId = uuidv4();
+
+  const approved = await new Promise<boolean>((resolveAuth) => {
+    const timeout = setTimeout(() => {
+      if (pendingAuths.has(authId)) {
+        console.log(`⏳ Authorization prompt for health check from '${webdomain}' timed out.`);
+        pendingAuths.delete(authId);
+        resolveAuth(false);
+      }
+    }, 60000);
+
+    pendingAuths.set(authId, {
+      resolve: (val) => {
+        clearTimeout(timeout);
+        resolveAuth(val);
+      },
+      webdomain,
+      category: "health"
+    });
+
+    if (workers.length === 0) {
+      console.log(`⚠️ No active GUI workers connected to authorize health check from '${webdomain}'`);
+      clearTimeout(timeout);
+      pendingAuths.delete(authId);
+      resolveAuth(false);
+      return;
+    }
+
+    const msg = JSON.stringify({
+      type: "AUTHORIZATION_REQUEST",
+      authId,
+      webdomain,
+      category: "health"
+    });
+
+    workers.forEach((w) => {
+      if (w.ws && w.ws.readyState === 1) {
+        w.ws.send(msg);
+      }
+    });
+  });
+
+  if (!approved) {
+    return { allowed: false, error: `Inbound request blocked: Permission from domain '${webdomain}' was rejected.` };
+  }
+
+  return { allowed: true };
 }

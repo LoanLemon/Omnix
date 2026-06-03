@@ -6,7 +6,7 @@ import cors from "cors";
 import multer from "multer";
 import { createServer } from "http";
 import open from "open";
-import { setupWebSockets, dispatchTask } from "./src/engine/socketHandler.ts";
+import { setupWebSockets, dispatchTask, handleHealthCheck } from "./src/engine/socketHandler.ts";
 
 process.on('uncaughtException', (err) => {
   console.error('💥 Uncaught Exception:', err);
@@ -16,10 +16,10 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const resolvedFilename = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+const resolvedDirname = typeof __dirname !== "undefined" ? __dirname : path.dirname(resolvedFilename);
 
-const PORT = parseInt(process.env.PORT || '3000');
+const PORT = parseInt(process.env.PORT || '9777');
 const args = process.argv.slice(2);
 const isSilent = args.includes("--silent") || process.env.NODE_ENV === "production" || !!process.env.K_SERVICE;
 const pidArgIndex = args.indexOf("--dependent-pid");
@@ -52,6 +52,15 @@ async function startServer() {
     console.log("Omnix: Running in Standalone Browser mode.");
   }
 
+  app.use((req, res, next) => {
+    if (req.headers["access-control-request-private-network"]) {
+      res.setHeader("Access-Control-Allow-Private-Network", "true");
+    }
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Private-Network", "true");
+    }
+    next();
+  });
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
 
@@ -75,8 +84,17 @@ async function startServer() {
   });
 
   // Health check
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", pid: process.pid });
+  app.get("/api/health", async (req, res) => {
+    try {
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      const check = await handleHealthCheck(origin);
+      if (!check.allowed) {
+        return res.status(403).json({ error: check.error || "Blocked by permission policy" });
+      }
+      res.json({ status: "ok", pid: process.pid });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // --- 2. PID MONITORING ---
@@ -99,11 +117,37 @@ async function startServer() {
   // Text Generation
   app.post("/api/text", async (req, res) => {
     try {
-      const { prompt, systemPrompt, modelId } = req.body;
+      const { prompt, systemPrompt, modelId, temperature, top_p, maxTokens } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-      const output = await dispatchTask("text", prompt, { systemPrompt, modelId });
-      res.json({ response: output });
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
+      const output = await dispatchTask("text", prompt, { systemPrompt, modelId, origin, reqId, temperature, top_p, maxTokens });
+      
+      let cleanResponse = output;
+      let thinkText: string | undefined = undefined;
+      
+      if (typeof output === "string") {
+        const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/i;
+        const match = output.match(thinkRegex);
+        if (match) {
+          thinkText = match[1].trim();
+          cleanResponse = output.replace(thinkRegex, "").trim();
+        } else {
+          const thoughtRegex = /<\|channel>thought\n([\s\S]*?)(?:<channel\|>|$)/i;
+          const thoughtMatch = output.match(thoughtRegex);
+          if (thoughtMatch) {
+            thinkText = thoughtMatch[1].trim();
+            cleanResponse = output.replace(thoughtRegex, "").trim();
+          }
+        }
+      }
+
+      if (thinkText !== undefined) {
+        res.json({ response: cleanResponse, think: thinkText });
+      } else {
+        res.json({ response: output });
+      }
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -115,7 +159,9 @@ async function startServer() {
       const { prompt } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-      const intent = await dispatchTask("director", prompt);
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
+      const intent = await dispatchTask("director", prompt, { origin, reqId });
       res.json({ intent, prompt });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -129,10 +175,35 @@ async function startServer() {
       const file = req.file;
       if (!file) return res.status(400).json({ error: "Image is required" });
 
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
       const base64Image = `data:image/jpeg;base64,${file.buffer.toString('base64')}`;
-      const response = await dispatchTask("vision", base64Image, { prompt, modelId });
+      const response = await dispatchTask("vision", base64Image, { prompt, modelId, origin, reqId });
 
-      res.json({ response });
+      let cleanResponse = response;
+      let thinkText: string | undefined = undefined;
+      
+      if (typeof response === "string") {
+        const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/i;
+        const match = response.match(thinkRegex);
+        if (match) {
+          thinkText = match[1].trim();
+          cleanResponse = response.replace(thinkRegex, "").trim();
+        } else {
+          const thoughtRegex = /<\|channel>thought\n([\s\S]*?)(?:<channel\|>|$)/i;
+          const thoughtMatch = response.match(thoughtRegex);
+          if (thoughtMatch) {
+            thinkText = thoughtMatch[1].trim();
+            cleanResponse = response.replace(thoughtRegex, "").trim();
+          }
+        }
+      }
+
+      if (thinkText !== undefined) {
+        res.json({ response: cleanResponse, think: thinkText });
+      } else {
+        res.json({ response });
+      }
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -144,8 +215,10 @@ async function startServer() {
       const file = req.file;
       if (!file) return res.status(400).json({ error: "Audio file is required" });
       
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
       const base64Audio = file.buffer.toString('base64');
-      const text = await dispatchTask("stt", base64Audio);
+      const text = await dispatchTask("stt", base64Audio, { origin, reqId });
 
       res.json({ text });
     } catch (error: any) {
@@ -159,7 +232,9 @@ async function startServer() {
       const { text, modelId } = req.body;
       if (!text) return res.status(400).json({ error: "Text is required" });
 
-      const output = await dispatchTask("tts", text, { modelId });
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
+      const output = await dispatchTask("tts", text, { modelId, origin, reqId });
       res.json(output);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -172,7 +247,9 @@ async function startServer() {
       const { prompt, modelId } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-      const image = await dispatchTask("image-gen", prompt, { modelId });
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
+      const image = await dispatchTask("image-gen", prompt, { modelId, origin, reqId });
       res.json({ status: "success", image });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -185,7 +262,9 @@ async function startServer() {
       const { prompt, modelId } = req.body;
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-      const output = await dispatchTask("music-gen", prompt, { modelId });
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
+      const output = await dispatchTask("music-gen", prompt, { modelId, origin, reqId });
       res.json({ status: "success", ...output });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -202,7 +281,12 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     console.log("📦 Serving production build...");
-    const distPath = path.join(process.cwd(), "dist");
+    let distPath: string;
+    if (resolvedFilename.endsWith("server.cjs")) {
+      distPath = resolvedDirname;
+    } else {
+      distPath = path.join(resolvedDirname, "dist");
+    }
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));

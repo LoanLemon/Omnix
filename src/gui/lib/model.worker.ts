@@ -635,10 +635,31 @@ class WorkerModelEngine {
     if (this.isBusy) throw new Error("Engine Busy");
     this.isBusy = true;
     try {
-      const modelId = options.modelId || this.getDefaultModel(category);
+      let modelId = options.modelId;
+      if (!modelId && this.currentModelId) {
+        const [curCategory, curModelId] = this.currentModelId.split(":");
+        if (curCategory === category) {
+          modelId = curModelId;
+        }
+      }
+      if (!modelId) {
+        modelId = this.getDefaultModel(category);
+      }
       await this.loadModel(category, modelId, sendProgress);
 
-      const maxTokens = this.isLowMemory ? 256 : (options.max_new_tokens || 512);
+      let parsedMaxTokens: number | undefined;
+      const rawMaxTokens = options.maxTokens !== undefined ? options.maxTokens : options.max_new_tokens;
+      if (rawMaxTokens !== undefined) {
+        parsedMaxTokens = Number(rawMaxTokens);
+      }
+
+      let maxTokens = this.isLowMemory ? 256 : (parsedMaxTokens || 512);
+
+      const capacity = this.getModelCapacity();
+      if (maxTokens > capacity) {
+        console.log(`⚠️ Requested maxTokens (${maxTokens}) exceeds model capacity (${capacity}). Capping to capacity.`);
+        maxTokens = capacity;
+      }
 
       if (category === "music-gen") {
         const inputs = this.processor(input);
@@ -733,10 +754,19 @@ class WorkerModelEngine {
           });
         }
 
+        const tempVal = options.temperature !== undefined ? Number(options.temperature) : undefined;
+        const topPVal = options.top_p !== undefined ? Number(options.top_p) : undefined;
+        let gemmaDoSample = options.do_sample !== undefined ? !!options.do_sample : false;
+        if (tempVal !== undefined || topPVal !== undefined) {
+          gemmaDoSample = tempVal !== 0;
+        }
+
         const outputs = await this.model.generate({
           ...inputs,
           max_new_tokens: maxTokens,
-          do_sample: false,
+          do_sample: gemmaDoSample,
+          ...(tempVal !== undefined ? { temperature: tempVal } : {}),
+          ...(topPVal !== undefined ? { top_p: topPVal } : {}),
         });
 
         const decoded = this.processor.batch_decode(
@@ -871,7 +901,20 @@ class WorkerModelEngine {
       }
 
       if (this.pipeline) {
-        const pipeOptions = { max_new_tokens: maxTokens, ...options };
+        const pipeTemp = options.temperature !== undefined ? Number(options.temperature) : undefined;
+        const pipeTopP = options.top_p !== undefined ? Number(options.top_p) : undefined;
+        let pipeDoSample = options.do_sample !== undefined ? !!options.do_sample : undefined;
+        if (pipeTemp !== undefined || pipeTopP !== undefined) {
+          pipeDoSample = pipeTemp !== 0;
+        }
+
+        const pipeOptions: any = {
+          ...options,
+          max_new_tokens: maxTokens,
+          ...(pipeTemp !== undefined ? { temperature: pipeTemp } : {}),
+          ...(pipeTopP !== undefined ? { top_p: pipeTopP } : {}),
+          ...(pipeDoSample !== undefined ? { do_sample: pipeDoSample } : {}),
+        };
         let formattedInput: any = input;
         let promptString = "";
         let promptWithoutSpecialTokens = "";
@@ -1100,6 +1143,28 @@ class WorkerModelEngine {
   private getDefaultModel(category: string) {
     const found = MODELS.find(m => m.category === category);
     return found ? found.id : "";
+  }
+
+  private getModelCapacity(): number {
+    const config = this.model?.config || this.pipeline?.model?.config;
+    if (config) {
+      const maxPos = config.max_position_embeddings || config.n_positions || config.n_ctx || config.max_seq_len;
+      if (typeof maxPos === "number" && maxPos > 0) {
+        return maxPos;
+      }
+    }
+    const tokenizer = this.processor?.tokenizer || this.pipeline?.tokenizer;
+    if (tokenizer && typeof tokenizer.model_max_length === "number" && tokenizer.model_max_length > 0 && tokenizer.model_max_length < 100000) {
+      return tokenizer.model_max_length;
+    }
+    if (this.currentModelId) {
+      const lower = this.currentModelId.toLowerCase();
+      if (lower.includes("llama-3")) return 8192;
+      if (lower.includes("gemma")) return 8192;
+      if (lower.includes("qwen")) return 32768;
+      if (lower.includes("phi-4")) return 16384;
+    }
+    return 2048;
   }
 
   private async float32ArrayToWavUrl(audioData: Float32Array, sampleRate: number): Promise<string> {

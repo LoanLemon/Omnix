@@ -12,6 +12,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { ChatArea } from "@/components/ChatArea";
 import { PreviewSidebar } from "@/components/PreviewSidebar";
 import { ErrorOverlay } from "@/components/ErrorOverlay";
+import { AuthPromptModal } from "@/components/AuthPromptModal";
 
 function AppContent() {
   const {
@@ -37,7 +38,9 @@ function AppContent() {
     setDidError,
     isWorkerMode,
     safeMode,
-    setSafeMode
+    setSafeMode,
+    activeAuthRequest,
+    respondToAuth
   } = useApp();
 
   if (isWorkerMode) {
@@ -129,6 +132,11 @@ function AppContent() {
         clearCache={clearCache}
         safeMode={safeMode}
         setSafeMode={setSafeMode}
+      />
+
+      <AuthPromptModal 
+        activeAuthRequest={activeAuthRequest}
+        respondToAuth={respondToAuth}
       />
     </div>
   );

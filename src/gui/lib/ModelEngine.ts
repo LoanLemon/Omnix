@@ -52,8 +52,60 @@ export class BrowserModelEngine {
   private hasEmbedding: boolean = false;
   private isLowMemory: boolean = false;
 
+  // Idle timer & listener states
+  private idleTimeoutId: any = null;
+  private readonly IDLE_LIMIT_MS = 10 * 60 * 1000; // 10 minutes
+  private listeners: Set<() => void> = new Set();
+  private onIdleUnloadCallback: (() => void) | null = null;
+
   constructor() {
     this.initWorker();
+  }
+
+  getCurrentModelId(): string | null {
+    return this.currentModelId;
+  }
+
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notify() {
+    this.listeners.forEach(cb => cb());
+  }
+
+  onIdleUnload(cb: (() => void) | null) {
+    this.onIdleUnloadCallback = cb;
+  }
+
+  private stopIdleTimer() {
+    if (this.idleTimeoutId) {
+      clearTimeout(this.idleTimeoutId);
+      this.idleTimeoutId = null;
+    }
+  }
+
+  private restartIdleTimer() {
+    this.stopIdleTimer();
+    
+    // Only start idle timer if there are no pending requests and at least one model is active
+    if (this.pendingRequests.size === 0 && (this.currentModelId || this.hasDirector || this.hasStt || this.hasTts || this.hasEmbedding)) {
+      console.log("⏱️ Starting 10-minute idle unload timer...");
+      this.idleTimeoutId = setTimeout(async () => {
+        console.log("💤 App idle for 10 minutes. Unloading active models to free up GPU/RAM memory...");
+        try {
+          await this.clear();
+          if (this.onIdleUnloadCallback) {
+            this.onIdleUnloadCallback();
+          }
+        } catch (e) {
+          console.error("Failed to unload models during idle cleanup:", e);
+        }
+      }, this.IDLE_LIMIT_MS);
+    }
   }
 
   private initWorker() {
@@ -105,11 +157,19 @@ export class BrowserModelEngine {
       return Promise.reject(new Error("Worker not initialized"));
     }
 
+    this.stopIdleTimer();
+
     const requestId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : (Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15));
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(requestId, {
-        resolve,
-        reject,
+        resolve: (val) => {
+          resolve(val);
+          this.restartIdleTimer();
+        },
+        reject: (err) => {
+          reject(err);
+          this.restartIdleTimer();
+        },
         progress_callback,
         onToken
       });
@@ -143,14 +203,18 @@ export class BrowserModelEngine {
       this.currentModelId = modelKey;
     }
 
-    return this.postToWorker("loadModel", { category, modelId }, progressCallback);
+    const res = await this.postToWorker("loadModel", { category, modelId }, progressCallback);
+    this.notify();
+    return res;
   }
 
   async unloadDirector() {
     if (this.isLowMemory) {
       this.hasDirector = false;
     }
-    return this.postToWorker("unloadDirector");
+    const res = await this.postToWorker("unloadDirector");
+    this.notify();
+    return res;
   }
 
   async clear() {
@@ -159,7 +223,9 @@ export class BrowserModelEngine {
     this.hasStt = false;
     this.hasTts = false;
     this.hasEmbedding = false;
-    return this.postToWorker("clear");
+    const res = await this.postToWorker("clear");
+    this.notify();
+    return res;
   }
 
   getEstimatedLoadedWeightsBytes(): number {
@@ -201,7 +267,16 @@ export class BrowserModelEngine {
   }
 
   async runInference(category: string, input: any, options: any = {}, onToken?: (token: string) => void) {
-    const modelId = options.modelId || this.getDefaultModel(category);
+    let modelId = options.modelId;
+    if (!modelId && this.currentModelId) {
+      const [curCategory, curModelId] = this.currentModelId.split(":");
+      if (curCategory === category) {
+        modelId = curModelId;
+      }
+    }
+    if (!modelId) {
+      modelId = this.getDefaultModel(category);
+    }
     
     // Warm memory tracking states before calling worker
     if (category === "stt") {
