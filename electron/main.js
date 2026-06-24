@@ -281,6 +281,17 @@ function createWindow() {
 
   mainWindow = win;
 
+  win.webContents.on('context-menu', (e, params) => {
+    const menu = Menu.buildFromTemplate([
+      { role: 'cut', label: 'Cut', enabled: params.editFlags.canCut },
+      { role: 'copy', label: 'Copy', enabled: params.editFlags.canCopy },
+      { role: 'paste', label: 'Paste', enabled: params.editFlags.canPaste },
+      { type: 'separator' },
+      { role: 'selectAll', label: 'Select All', enabled: params.editFlags.canSelectAll }
+    ]);
+    menu.popup({ window: win });
+  });
+
   if (isDev) {
     win.loadURL(`http://localhost:${OMNIX_PORT}`);
     win.webContents.openDevTools();

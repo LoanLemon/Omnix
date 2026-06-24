@@ -40,7 +40,9 @@ function AppContent() {
     safeMode,
     setSafeMode,
     activeAuthRequest,
-    respondToAuth
+    respondToAuth,
+    showMemoryDashboard,
+    setShowMemoryDashboard
   } = useApp();
 
   if (isWorkerMode) {
@@ -114,13 +116,8 @@ function AppContent() {
           handleOptionSelect={() => {}}
         />
 
-        {(sandboxFiles.length > 0 || generatedImage) && (
-          <PreviewSidebar 
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            sandboxFiles={sandboxFiles}
-            generatedImage={generatedImage}
-          />
+        {(sandboxFiles.length > 0 || generatedImage || showMemoryDashboard) && (
+          <PreviewSidebar />
         )}
       </div>
 

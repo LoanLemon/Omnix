@@ -1,12 +1,25 @@
 import React, { createContext, useContext, ReactNode } from "react";
-import { LogEntry, Message, ChatMode, SandboxFile } from "@shared/types";
+import { LogEntry, Message, ChatMode, SandboxFile, ChatTab, FocusTopic, EmotionalState } from "@shared/types";
 
 interface AppContextType {
+  // Tabs State
+  chatTabs: ChatTab[];
+  activeTabId: string;
+  selectTab: (id: string) => void;
+  openNewTab: (isTemporary?: boolean) => void;
+  closeTab: (id: string) => void;
+
   // Settings
   ramLimitPercent: number;
   setRamLimitPercent: (val: number) => void;
   enableRAG: boolean;
   setEnableRAG: (val: boolean) => void;
+  enableFocusTopics: boolean;
+  setEnableFocusTopics: (val: boolean) => void;
+  focusTopics: FocusTopic[];
+  setFocusTopics: React.Dispatch<React.SetStateAction<FocusTopic[]>>;
+  emotionalState: EmotionalState;
+  setEmotionalState: (val: EmotionalState) => void;
   speakEnabled: boolean;
   setSpeakEnabled: (val: boolean) => void;
   chatMode: ChatMode;
@@ -59,6 +72,7 @@ interface AppContextType {
   memoryUsage: { used: number; total: number };
   hasWebGPU: boolean | null;
   logs: LogEntry[];
+  addLog: (message: string, type?: "info" | "error" | "success") => void;
   showLogs: boolean;
   setShowLogs: (val: boolean) => void;
 
@@ -73,10 +87,14 @@ interface AppContextType {
   toggleLiveMode: () => void;
   safeMode: boolean;
   setSafeMode: (val: boolean) => void;
+  livePermissionError: boolean;
+  setLivePermissionError: (val: boolean) => void;
 
   // Sidebar
   showSidebar: boolean;
   setShowSidebar: (val: boolean) => void;
+  showMemoryDashboard: boolean;
+  setShowMemoryDashboard: (val: boolean) => void;
 
   // Error State
   error: string | null;
@@ -88,20 +106,20 @@ interface AppContextType {
   workerCount: number;
   setWorkerCount: (val: number) => void;
   activeAuthRequest: { authId: string; webdomain: string; category: string } | null;
-  respondToAuth: (authId: string, decision: "once" | "always" | "never") => void;
+  respondToAuth: (authId: string, decision: "once" | "always" | "never" | "block_once") => void;
 
   // Sandbox & Media
   sandboxFiles: SandboxFile[];
   setSandboxFiles: React.Dispatch<React.SetStateAction<SandboxFile[]>>;
-  activeTab: "chat" | "sandbox" | "gallery";
-  setActiveTab: (val: "chat" | "sandbox" | "gallery") => void;
+  activeTab: "chat" | "sandbox" | "gallery" | "memory";
+  setActiveTab: (val: "chat" | "sandbox" | "gallery" | "memory") => void;
   generatedImage: string | null;
   setGeneratedImage: (val: string | null) => void;
   pendingImage: string | null;
   setPendingImage: (val: string | null) => void;
 
   // Operations
-  loadModel: (category: string, modelId?: string) => Promise<void>;
+  loadModel: (category: string, modelId?: string, skipLoadingVisuals?: boolean) => Promise<void>;
   analyzeImage: (file: File) => void;
   handleSend: () => void;
   clearChat: () => void;

@@ -1,8 +1,26 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Message, ChatMode } from "@shared/types";
+import { Message, ChatMode, FocusTopic } from "@shared/types";
 import { MODELS } from "@shared/modelList";
 import { browserEngine } from "@/lib/ModelEngine";
 import { memoryStore } from "@/lib/memory";
+import { 
+  TEXT_SYSTEM_PROMPT, 
+  CODER_SYSTEM_PROMPT, 
+  IMAGE_SYSTEM_PROMPT, 
+  MUSIC_SYSTEM_PROMPT, 
+  LIVE_SYSTEM_PROMPT, 
+  DIRECTOR_SYSTEM_PROMPT, 
+  formatMemoryPrompt,
+  formatMemoriesAsTable,
+  distillMemories,
+  formatConversationTranscript
+} from "@shared/prompts";
+
+export const getFormattedTimestamp = () => {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
 
 export function useChatLogic(
   messages: Message[],
@@ -12,7 +30,7 @@ export function useChatLogic(
   enableRAG: boolean,
   loadedModelId: string | null,
   selectedModels: Record<string, string>,
-  loadModel: (category: string, modelId?: string) => Promise<void>,
+  loadModel: (category: string, modelId?: string, skipLoadingVisuals?: boolean) => Promise<void>,
   addLog: (msg: string, type?: "info" | "error" | "success") => void,
   ramLimitPercent: number,
   setMemoryUsage: (val: any) => void,
@@ -25,7 +43,10 @@ export function useChatLogic(
   setIsModelLoading: (val: boolean) => void,
   setLoadingProgress: React.Dispatch<React.SetStateAction<Record<string, { progress: number; status: string }>>>,
   thinkEnabled?: boolean,
-  setError?: (msg: string | null) => void
+  setError?: (msg: string | null) => void,
+  activeTabId?: string,
+  focusTopics?: FocusTopic[],
+  enableFocusTopics?: boolean
 ) {
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -53,6 +74,12 @@ export function useChatLogic(
 
   const [longTermMemories, setLongTermMemories] = useState(0);
   const isProcessingRef = useRef(false);
+  const masterQueueRef = useRef<any[]>([]);
+  const messagesRef = useRef(messages);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const refreshMemoryCount = useCallback(async () => {
     try {
@@ -67,7 +94,7 @@ export function useChatLogic(
     refreshMemoryCount();
   }, [refreshMemoryCount]);
 
-  const indexMemory = useCallback(async (content: string) => {
+  const indexMemory = useCallback(async (content: string, sender: "User" | "AI", direction: "Input" | "Output") => {
     if (!content || content.trim().length < 5) return;
     try {
       console.log("Adding memory indices for:", content.substring(0, 30));
@@ -76,7 +103,8 @@ export function useChatLogic(
         id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
         text: content,
         embedding,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        metadata: { sender, direction }
       });
       await refreshMemoryCount();
     } catch (e) {
@@ -84,20 +112,37 @@ export function useChatLogic(
     }
   }, [refreshMemoryCount]);
 
-  const performLocalInference = useCallback(async (text: string, category: string, options: any = {}) => {
+  const performLocalInference = useCallback(async (text: string, category: string, options: any = {}, assistantMsgId?: string) => {
     setIsGenerating(true);
     addLog(`Engine: Executing ${category} task...`, "info");
-    
-    // Add assistant message for streaming
-    setMessages(prev => [...prev, { role: "assistant", content: "", isQueued: true }]);
 
     try {
       // Ensure the correct model is loaded and sync React state
       const targetModelId = options.modelId || (category === "text" ? selectedModels.text : selectedModels[category]);
-      await loadModel(category, targetModelId);
+      await loadModel(category, targetModelId, options.skipModelLoadVisuals);
 
-      // Contextual RAG retrieval if enabled
+      // Contextual RAG retrieval and chronological session history integration
       let contextNotes = "";
+      let retrievedItems: any[] = [];
+
+      const lowerText = text.toLowerCase();
+      const isMemoryQuery = /remember|recall|memory|memories|forget|history|who am i|know about me|what did we|our chats|session|say|said|tell me|ask|asked|chat|chats/i.test(lowerText);
+
+      // Seed history reference table with the active chat session's actual messages ONLY when asking about history/memories
+      if (isMemoryQuery && options.chatHistory && Array.isArray(options.chatHistory)) {
+        options.chatHistory.forEach((m: any) => {
+          if (m.hidden || m.isThinking || m.isQueued) return;
+          retrievedItems.push({
+            timestamp: m.timestamp,
+            text: m.content || m.text || "",
+            metadata: {
+              sender: (m.role === "assistant" || m.role === "model") ? "AI" : "User",
+              direction: (m.role === "assistant" || m.role === "model") ? "Output" : "Input"
+            }
+          });
+        });
+      }
+
       if (enableRAG && (category === "text" || category === "coder")) {
         addLog("Retrieving related memories via Semantic Cosine Similarity search...", "info");
         try {
@@ -111,21 +156,94 @@ export function useChatLogic(
             }
           });
           const matches = await memoryStore.search(queryVector, 3, 0.45);
-          if (matches && matches.length > 0) {
-            contextNotes = matches.map(m => `[Recalled Memory]: ${m.text}`).join("\n");
-            addLog(`Semantic match successful: Recalled ${matches.length} context nodes.`, "success");
-          } else {
-            addLog("No semantic memories matched query threshold.", "info");
+          let dbItems = [...(matches || [])];
+
+          // Force-inject recent memory notes if the query is a meta-request asking what the AI remembers/knows
+          if (isMemoryQuery) {
+            addLog("Memory-recall intent detected. Retrieving latest database memories...", "info");
+            const allMemories = await memoryStore.getAll();
+            const recent = allMemories
+              .sort((a, b) => b.timestamp - a.timestamp)
+              .slice(0, 10);
+            
+            recent.forEach(r => {
+              if (!dbItems.find(x => x.id === r.id)) {
+                dbItems.push(r);
+              }
+            });
           }
+
+          // Merge non-duplicate background memories into the retrievedItems list
+          dbItems.forEach(dbItem => {
+            const dbText = (dbItem.text || "").trim().toLowerCase();
+            const isDuplicate = retrievedItems.some(item => {
+              const activeText = (item.text || item.content || "").trim().toLowerCase();
+              return activeText === dbText || activeText.includes(dbText) || dbText.includes(activeText);
+            });
+            if (!isDuplicate) {
+              retrievedItems.push({
+                timestamp: dbItem.timestamp,
+                text: dbItem.text,
+                metadata: dbItem.metadata || { sender: "User", direction: "Input" }
+              });
+            }
+          });
+
+          addLog(`RAG integration successful: Combined ${retrievedItems.length} conversational contexts.`, "success");
         } catch (ragRErr: any) {
           console.warn("RAG retrieval failed:", ragRErr);
         }
       }
 
+      if (retrievedItems.length > 0) {
+        // Sort ascending chronologically by parsed timestamp
+        retrievedItems.sort((a, b) => {
+          const tA = a.timestamp ? (typeof a.timestamp === "number" ? a.timestamp : new Date(a.timestamp).getTime()) : 0;
+          const tB = b.timestamp ? (typeof b.timestamp === "number" ? b.timestamp : new Date(b.timestamp).getTime()) : 0;
+          return tA - tB;
+        });
+
+        if (isMemoryQuery) {
+          contextNotes = formatConversationTranscript(retrievedItems);
+        } else {
+          contextNotes = distillMemories(retrievedItems);
+        }
+      }
+
       let finalSystemPrompt = options.systemPrompt || "";
+      const timeStr = `[Current Time & Date: ${getFormattedTimestamp()}]`;
+      finalSystemPrompt = finalSystemPrompt ? `${timeStr}\n\n${finalSystemPrompt}` : timeStr;
+
       if (contextNotes) {
-        finalSystemPrompt = (finalSystemPrompt ? `${finalSystemPrompt}\n\n` : "") + 
-          `Here are some recalled memories from past interactions to help you maintain continuous context:\n${contextNotes}`;
+        const memoryPrompt = formatMemoryPrompt(contextNotes, isMemoryQuery);
+        if (memoryPrompt) {
+          finalSystemPrompt = (finalSystemPrompt ? `${finalSystemPrompt}\n\n` : "") + memoryPrompt;
+        }
+      }
+
+      if (enableFocusTopics && focusTopics && focusTopics.length > 0) {
+        const topicsStr = [
+          "**Focus Topics:**",
+          ...focusTopics.map(t => `* ${t.name} (${Math.round(t.energy)}% focus)`)
+        ].join("\n");
+        finalSystemPrompt = (finalSystemPrompt ? `${finalSystemPrompt}\n\n` : "") + topicsStr;
+      }
+
+      const isSmallModel = targetModelId && (
+        targetModelId.toLowerCase().includes("llama") || 
+        targetModelId.toLowerCase().includes("qwen") || 
+        targetModelId.toLowerCase().includes("tiny-llm")
+      );
+
+      let adjustedHistory = options.chatHistory || [];
+      if (isSmallModel) {
+        const isUltraTiny = targetModelId.toLowerCase().includes("tiny-llm") || 
+                            targetModelId.toLowerCase().includes("0.5b") || 
+                            targetModelId.toLowerCase().includes("0.6b");
+        const limit = isUltraTiny ? -4 : -6;
+        if (adjustedHistory.length > Math.abs(limit)) {
+          adjustedHistory = adjustedHistory.slice(limit);
+        }
       }
 
       let accumulatedText = "";
@@ -134,6 +252,9 @@ export function useChatLogic(
         text,
         {
           ...options,
+          chatHistory: adjustedHistory,
+          repetition_penalty: isSmallModel ? 1.18 : (options.repetition_penalty || undefined),
+          temperature: isSmallModel ? 0.7 : (options.temperature !== undefined ? options.temperature : undefined),
           systemPrompt: finalSystemPrompt || undefined,
           modelId: targetModelId,
           progress_callback: (p: any) => {
@@ -183,61 +304,92 @@ export function useChatLogic(
 
             setMessages(prev => {
               const filtered = prev.filter(m => !m.isThinking);
-              const last = filtered[filtered.length - 1];
-              if (last && last.role === "assistant") {
-                return [...filtered.slice(0, -1), { ...last, content: displayContent, isQueued: false }];
-              }
-              return filtered;
+              return filtered.map(m => {
+                if (m.id === assistantMsgId) {
+                  return { ...m, content: displayContent, isQueued: false };
+                }
+                return m;
+              });
             });
           } else {
             setMessages(prev => {
               const filtered = prev.filter(m => !m.isThinking);
-              const last = filtered[filtered.length - 1];
-              if (last && last.role === "assistant") {
-                return [...filtered.slice(0, -1), { ...last, content: last.content + token, isQueued: false }];
-              }
-              return filtered;
+              return filtered.map(m => {
+                if (m.id === assistantMsgId) {
+                  return { ...m, content: m.content + token, isQueued: false };
+                }
+                return m;
+              });
             });
           }
         }
       );
 
       if (category === "image-gen") {
-        setMessages(prev => [...prev.filter(m => !m.isThinking && !m.isQueued), { role: "assistant", content: "Image generated successfully.", image: result as string }]);
+        setMessages(prev => {
+          return prev.filter(m => !m.isThinking).map(m => {
+            if (m.id === assistantMsgId) {
+              return {
+                ...m,
+                content: "Image generated successfully.",
+                image: result as string,
+                isQueued: false
+              };
+            }
+            return m;
+          });
+        });
       } else if (category === "music-gen") {
-        setMessages(prev => [...prev.filter(m => !m.isThinking && !m.isQueued), { role: "assistant", content: "Audio synthesized successfully.", audio: (result as any).audio }]);
+        setMessages(prev => {
+          return prev.filter(m => !m.isThinking).map(m => {
+            if (m.id === assistantMsgId) {
+              return {
+                ...m,
+                content: "Audio synthesized successfully.",
+                audio: (result as any).audio,
+                isQueued: false
+              };
+            }
+            return m;
+          });
+        });
       } else {
         setMessages(prev => {
-          const filtered = prev.filter(m => !m.isThinking);
-          const last = filtered[filtered.length - 1];
-          if (last && last.role === "assistant") {
-            let finalContent = last.content || (result as string) || "";
-            if (category === "text" || category === "coder") {
-              finalContent = finalContent.replace(/<think>[\s\S]*?<\/think>/gi, "");
-              const thinkOpenIdx = finalContent.toLowerCase().indexOf("<think>");
-              if (thinkOpenIdx !== -1) {
-                finalContent = finalContent.substring(0, thinkOpenIdx);
+          return prev.filter(m => !m.isThinking).map(m => {
+            if (m.id === assistantMsgId) {
+              let finalContent = m.content || (result as string) || "";
+              if (category === "text" || category === "coder") {
+                finalContent = finalContent.replace(/<think>[\s\S]*?<\/think>/gi, "");
+                const thinkOpenIdx = finalContent.toLowerCase().indexOf("<think>");
+                if (thinkOpenIdx !== -1) {
+                  finalContent = finalContent.substring(0, thinkOpenIdx);
+                }
+                finalContent = finalContent.replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "");
+                finalContent = finalContent.trim();
               }
-              finalContent = finalContent.replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "");
-              finalContent = finalContent.trim();
+              return {
+                ...m,
+                content: finalContent,
+                isQueued: false
+              };
             }
-            return [...filtered.slice(0, -1), { ...last, content: finalContent, isQueued: false }];
-          }
-          return filtered;
+            return m;
+          });
         });
       }
 
       // Automatic memory indexing for completed interactions if active
       if (enableRAG && (category === "text" || category === "coder")) {
         // Index the user prompt and the generated AI answer asynchronously
-        indexMemory(text);
+        indexMemory(text, "User", "Input");
         if (typeof result === "string" && result) {
           let cleanResult = result.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
           const thinkOpenIdx = cleanResult.toLowerCase().indexOf("<think>");
           if (thinkOpenIdx !== -1) {
             cleanResult = cleanResult.substring(0, thinkOpenIdx).trim();
           }
-          indexMemory(cleanResult);
+          cleanResult = cleanResult.replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "").trim();
+          indexMemory(cleanResult, "AI", "Output");
         }
       }
       
@@ -245,8 +397,16 @@ export function useChatLogic(
     } catch (err: any) {
       addLog(`Engine Error: ${err?.message || err?.toString() || "Unknown error occurred during inference"}`, "error");
       setMessages(prev => {
-        const filtered = prev.filter(m => !m.isThinking);
-        return [...filtered.slice(0, -1), { role: "assistant", content: `Error: ${err?.message || "Inference failed."}` }];
+        return prev.filter(m => !m.isThinking).map(m => {
+          if (m.id === assistantMsgId) {
+            return {
+              ...m,
+              content: `Error: ${err?.message || "Inference failed."}`,
+              isQueued: false
+            };
+          }
+          return m;
+        });
       });
       if (setError) {
         setError(err?.message || String(err));
@@ -262,6 +422,165 @@ export function useChatLogic(
     addLog("Summarization logic not fully implemented yet", "info");
   }, [addLog]);
 
+  const executeJob = useCallback(async (job: any) => {
+    let category = job.category;
+    let finalInput = job.text;
+    let finalOptions = { ...job.options };
+
+    try {
+      if (job.isDirector) {
+        addLog("System: Engaging Director for task routing...", "info");
+        const directorId = selectedModels.director === "use-text-model" ? selectedModels.text : selectedModels.director;
+        const directorInfo = MODELS.find(m => m.id === directorId);
+        
+        const routing = await browserEngine.runDirectorInference(job.text, directorInfo?.modelID, (p) => {
+          if (p.status === "progress") {
+            setIsModelLoading(true);
+            setLoadingProgress(prev => ({
+              ...prev,
+              [p.file]: { progress: p.progress, status: `Downloading Director...` }
+            }));
+          }
+        });
+
+        category = routing.category;
+        finalInput = routing.prompt;
+
+        if (thinkEnabled && routing.thinking) {
+          addLog("Director: Showing reasoning process in chat.", "info");
+          setMessages(prev => {
+            const idx = prev.findIndex(m => m.id === job.assistantMsgId);
+            if (idx !== -1) {
+              const updated = [...prev];
+              updated.splice(idx, 0, {
+                role: "assistant",
+                content: `💭 *Reasoning:* \n\n${routing.thinking}`,
+                isThinking: true,
+                timestamp: getFormattedTimestamp()
+              });
+              return updated;
+            }
+            return [...prev, {
+              role: "assistant",
+              content: `💭 *Reasoning:* \n\n${routing.thinking}`,
+              isThinking: true,
+              timestamp: getFormattedTimestamp()
+            }];
+          });
+        }
+
+        const targetModelId = category === "text" ? selectedModels.text : selectedModels[category];
+        const targetModelInfo = MODELS.find(m => m.id === targetModelId);
+        const isSameModel = targetModelInfo && directorInfo && (targetModelInfo.modelID === directorInfo.modelID);
+
+        if (!isSameModel) {
+          await browserEngine.unloadDirector();
+          await new Promise(resolve => setTimeout(resolve, 500)); // Let WebGPU and GC settle completely before loading next model
+        } else {
+          addLog("System: Retaining Director as active text model (bypass reload).", "info");
+          finalOptions.skipModelLoadVisuals = true;
+        }
+
+        let targetSystemPrompt = TEXT_SYSTEM_PROMPT;
+        if (category === "coder" || category === "sandbox") {
+          targetSystemPrompt = CODER_SYSTEM_PROMPT;
+        } else if (category === "image-gen" || category === "image") {
+          targetSystemPrompt = IMAGE_SYSTEM_PROMPT;
+        } else if (category === "music-gen" || category === "music") {
+          targetSystemPrompt = MUSIC_SYSTEM_PROMPT;
+        } else if (category === "vision" || category === "live") {
+          targetSystemPrompt = LIVE_SYSTEM_PROMPT;
+        }
+        finalOptions.systemPrompt = targetSystemPrompt;
+        
+        addLog(`System: Routed to ${category} engine by Director.`, "success");
+      }
+
+      const messagesLatest = messagesRef.current;
+      const userMsgIndex = messagesLatest.findIndex(m => m.id === job.userMsgId);
+      const upToUser = userMsgIndex !== -1 ? messagesLatest.slice(0, userMsgIndex + 1) : messagesLatest;
+
+      const chatHistory = upToUser.filter(
+        (m: any) => (m.role === "user" || m.role === "assistant") && !m.hidden && !m.isThinking
+      ).slice(-10);
+
+      finalOptions.chatHistory = chatHistory;
+      if (activeTabId) {
+        finalOptions.reqId = activeTabId;
+      }
+
+      await performLocalInference(finalInput, category, finalOptions, job.assistantMsgId);
+    } catch (err: any) {
+      addLog(`System/Director Error: ${err?.message || err?.toString()}`, "error");
+      if (setError) {
+        setError(err?.message || String(err));
+      }
+      setMessages(prev => prev.map(m => {
+        if (m.id === job.assistantMsgId) {
+          return { ...m, content: `Error: ${err?.message || "Routing / inference failed."}`, isQueued: false };
+        }
+        return m;
+      }));
+      setIsGenerating(false);
+      setIsModelLoading(false);
+      setLoadingProgress({});
+    }
+  }, [selectedModels, thinkEnabled, activeTabId, performLocalInference, setError, setIsModelLoading, setLoadingProgress, addLog, setMessages]);
+
+  const processNextJob = useCallback(async () => {
+    if (isProcessingRef.current) return;
+    if (masterQueueRef.current.length === 0) return;
+
+    isProcessingRef.current = true;
+    setIsGenerating(true);
+
+    const job = masterQueueRef.current[0];
+
+    try {
+      await executeJob(job);
+    } catch (err) {
+      console.error("Job execution failed:", err);
+    } finally {
+      masterQueueRef.current.shift();
+
+      if (job.category === "director") {
+        setDirectorModelQueue(prev => prev.filter(j => j.id !== job.id));
+      } else if (job.category === "vision" || job.category === "live") {
+        setVisionModelQueue(prev => prev.filter(j => j.id !== job.id));
+      } else if (job.category === "image-gen" || job.category === "image") {
+        setImageModelQueue(prev => prev.filter(j => j.id !== job.id));
+      } else if (job.category === "music-gen" || job.category === "music") {
+        setMusicModelQueue(prev => prev.filter(j => j.id !== job.id));
+      } else {
+        setTextModelQueue(prev => prev.filter(j => j.id !== job.id));
+      }
+
+      isProcessingRef.current = false;
+      setIsGenerating(false);
+
+      setTimeout(() => {
+        processNextJob();
+      }, 0);
+    }
+  }, [executeJob]);
+
+  const pushJob = useCallback((job: any) => {
+    masterQueueRef.current.push(job);
+    if (job.category === "director") {
+      setDirectorModelQueue(prev => [...prev, job]);
+    } else if (job.category === "vision" || job.category === "live") {
+      setVisionModelQueue(prev => [...prev, job]);
+    } else if (job.category === "image-gen" || job.category === "image") {
+      setImageModelQueue(prev => [...prev, job]);
+    } else if (job.category === "music-gen" || job.category === "music") {
+      setMusicModelQueue(prev => [...prev, job]);
+    } else {
+      setTextModelQueue(prev => [...prev, job]);
+    }
+
+    processNextJob();
+  }, [processNextJob]);
+
   const handleSend = useCallback(async () => {
     if (!input.trim() && !pendingImage) return;
 
@@ -270,8 +589,13 @@ export function useChatLogic(
     setInput("");
     setPendingImage(null);
     
-    const userMsg: Message = { role: "user", content: currentInput, image: currentImage || undefined };
-    setMessages(prev => [...prev, userMsg]);
+    const userMsgId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11);
+    const assistantMsgId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11);
+
+    const userMsg: Message = { id: userMsgId, role: "user", content: currentInput, image: currentImage || undefined, timestamp: getFormattedTimestamp() };
+    const assistantMsg: Message = { id: assistantMsgId, role: "assistant", content: "", isQueued: true, timestamp: getFormattedTimestamp() };
+
+    setMessages(prev => [...prev, userMsg, assistantMsg]);
 
     let category = currentImage ? "vision" : (isCoderMode ? "coder" : "text");
     if (!currentImage) {
@@ -285,78 +609,71 @@ export function useChatLogic(
         category = "coder";
       }
     }
-    let finalInput = currentImage || currentInput;
-    let finalOptions: any = { prompt: currentImage ? currentInput : undefined };
-
-    try {
-      if (chatMode === "director" && !currentImage) {
-        addLog("System: Engaging Director for task routing...", "info");
-        const directorInfo = MODELS.find(m => m.id === selectedModels.director);
-        const routing = await browserEngine.runDirectorInference(currentInput, directorInfo?.modelID, (p) => {
-          if (p.status === "progress") {
-            setIsModelLoading(true);
-            setLoadingProgress(prev => ({
-              ...prev,
-              [p.file]: { progress: p.progress, status: `Downloading Director...` }
-            }));
-          }
-        });
-        category = routing.category;
-        finalInput = routing.prompt;
-
-        if (thinkEnabled && routing.thinking) {
-          addLog("Director: Showing reasoning process in chat.", "info");
-          setMessages(prev => [...prev, {
-            role: "assistant",
-            content: `💭 *Reasoning:* \n\n${routing.thinking}`,
-            isThinking: true
-          }]);
-        }
-
-        const targetModelId = category === "text" ? selectedModels.text : selectedModels[category];
-        const targetModelInfo = MODELS.find(m => m.id === targetModelId);
-        const isSameModel = targetModelInfo && directorInfo && (targetModelInfo.modelID === directorInfo.modelID);
-
-        if (!isSameModel) {
-          await browserEngine.unloadDirector();
-          await new Promise(resolve => setTimeout(resolve, 500)); // Let WebGPU and GC settle completely before loading next model
-        } else {
-          addLog("System: Retaining Director as active text model (bypass reload).", "info");
-        }
-        
-        addLog(`System: Routed to ${category} engine by Director.`, "success");
-      }
-
-      const chatHistory = [...messages, userMsg].filter(
-        (m: any) => m.role === "user" || m.role === "assistant"
-      ).slice(-10);
-
-      finalOptions.chatHistory = chatHistory;
-
-      await performLocalInference(finalInput, category, finalOptions);
-    } catch (err: any) {
-      addLog(`System/Director Error: ${err?.message || err?.toString()}`, "error");
-      if (setError) {
-        setError(err?.message || String(err));
-      }
-      setIsGenerating(false);
-      setIsModelLoading(false);
-      setLoadingProgress({});
+    
+    let systemPrompt = TEXT_SYSTEM_PROMPT;
+    if (chatMode === "sandbox" || isCoderMode) {
+      systemPrompt = CODER_SYSTEM_PROMPT;
+    } else if (chatMode === "image") {
+      systemPrompt = IMAGE_SYSTEM_PROMPT;
+    } else if (chatMode === "music") {
+      systemPrompt = MUSIC_SYSTEM_PROMPT;
+    } else if (chatMode === "live") {
+      systemPrompt = LIVE_SYSTEM_PROMPT;
+    } else if (chatMode === "director") {
+      systemPrompt = DIRECTOR_SYSTEM_PROMPT;
     }
-  }, [input, pendingImage, isCoderMode, chatMode, performLocalInference, addLog, setIsModelLoading, setLoadingProgress, messages, setError, selectedModels]);
+
+    const job = {
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
+      category,
+      chatMode,
+      text: currentImage || currentInput,
+      options: {
+        prompt: currentImage ? currentInput : undefined,
+        systemPrompt
+      },
+      userMsgId,
+      assistantMsgId,
+      isDirector: chatMode === "director" && !currentImage,
+      isInternal: false
+    };
+
+    pushJob(job);
+  }, [input, pendingImage, isCoderMode, chatMode, pushJob]);
 
   const handleSendInternal = useCallback(async (text: string, systemPrompt?: string, role: "user" | "system" = "user", hidden = false) => {
     if (!text.trim()) return;
-    const userMsg: Message = { role, content: text, hidden };
-    if (!hidden) setMessages(prev => [...prev, userMsg]);
-    const cat = isCoderMode ? "coder" : "text";
 
-    const chatHistory = [...messages, userMsg].filter(
-      (m: any) => m.role === "user" || m.role === "assistant"
-    ).slice(-10);
+    const userMsgId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11);
+    const assistantMsgId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11);
 
-    await performLocalInference(text, cat, { systemPrompt, chatHistory });
-  }, [isCoderMode, performLocalInference, messages]);
+    const userMsg: Message = { id: userMsgId, role, content: text, hidden, timestamp: getFormattedTimestamp() };
+    const assistantMsg: Message = { id: assistantMsgId, role: "assistant", content: "", isQueued: true, timestamp: getFormattedTimestamp() };
+
+    if (!hidden) {
+      setMessages(prev => [...prev, userMsg, assistantMsg]);
+    } else {
+      setMessages(prev => [...prev, assistantMsg]);
+    }
+
+    const category = isCoderMode ? "coder" : "text";
+
+    const job = {
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
+      category,
+      chatMode,
+      text,
+      options: {
+        systemPrompt
+      },
+      userMsgId,
+      assistantMsgId,
+      isDirector: false,
+      isInternal: true
+    };
+
+    pushJob(job);
+  }, [isCoderMode, chatMode, pushJob]);
 
   return {
     messages,

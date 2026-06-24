@@ -36,6 +36,15 @@ export const MODELS: ModelInfo[] = [
     "minRam": 10
   },
   {
+    "id": "use-text-model",
+    "modelID": "use-text-model",
+    "name": "[Use Text Model]",
+    "description": "Bypasses dedicated director inference and routes tasks using the selected general text model instead.",
+    "category": "director",
+    "make": "DYNAMIC",
+    "minRam": 0
+  },
+  {
     "id": "qwen-2.5-Instruct-abliterated-0.5b-q4",
     "modelID": "LemOneLabs/Qwen2.5-0.5B-Instruct-abliterated-ONNX",
     "name": "Qwen 2.5 Instruct 0.5B",

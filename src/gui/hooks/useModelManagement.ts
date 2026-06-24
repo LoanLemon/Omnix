@@ -18,7 +18,7 @@ export function useModelManagement(
     tts: "kokoro-82m",
     "image-gen": "Janus-Pro-1B-ONNX",
     "music-gen": "musicgen-small",
-    director: "qwen-3-0.6b-q4",
+    director: "use-text-model",
     coder: "qwen-2.5-coder-3b-q4",
   });
   const [activeCategory, setActiveCategory] = useState<string>("director");
@@ -31,8 +31,15 @@ export function useModelManagement(
     return !filteredModelsList.some(m => m.category === cat && (!m.minRam || m.minRam <= systemRam));
   }, [systemRam, filteredModelsList]);
 
-  const loadModel = useCallback(async (category: string, modelId?: string) => {
+  const loadModel = useCallback(async (category: string, modelId?: string, skipLoadingVisuals = false) => {
     let id = modelId || selectedModels[category];
+    let actualCategory = category;
+
+    if (category === "director" && id === "use-text-model") {
+      actualCategory = "text";
+      id = selectedModels.text;
+    }
+
     let modelInfo = filteredModelsList.find((m) => m.id === id);
     
     if (modelInfo && modelInfo.minRam && modelInfo.minRam > systemRam) {
@@ -53,12 +60,15 @@ export function useModelManagement(
     if (!modelInfo) return;
 
     setActiveCategory(category);
-    setIsModelLoading(true);
-    setIsModelReady(false);
-    addLog(`Loading Engine: ${modelInfo.name}...`, "info");
+    if (!skipLoadingVisuals) {
+      setIsModelLoading(true);
+      setIsModelReady(false);
+      addLog(`Loading Engine: ${modelInfo.name}...`, "info");
+    }
 
     try {
-      await browserEngine.loadModel(category, id, (p: any) => {
+      await browserEngine.loadModel(actualCategory, id, (p: any) => {
+        if (skipLoadingVisuals) return;
         if (p.status === "progress") {
           setLoadingProgress(prev => ({
             ...prev,
@@ -76,7 +86,11 @@ export function useModelManagement(
       setIsModelReady(true);
       setIsModelLoading(false);
       setLoadingProgress({});
-      addLog(`Engine Ready: ${modelInfo.name}`, "success");
+      if (!skipLoadingVisuals) {
+        addLog(`Engine Ready: ${modelInfo.name}`, "success");
+      } else {
+        addLog(`Engine active: ${modelInfo.name} (retained from Director)`, "success");
+      }
     } catch (err: any) {
       addLog(`Engine Error: ${err.message}`, "error");
       setError(err.message);
@@ -106,7 +120,7 @@ export function useModelManagement(
             const preferred = possible.find(m => m.id === "qwen-3-0.6b-q4-text");
             next[cat] = preferred ? preferred.id : possible[0].id;
           } else if (cat === "director") {
-            const preferred = possible.find(m => m.id === "qwen-3-0.6b-q4");
+            const preferred = possible.find(m => m.id === "use-text-model");
             next[cat] = preferred ? preferred.id : possible[0].id;
           } else {
             const sorted = [...possible].sort((a, b) => (b.minRam || 0) - (a.minRam || 0));

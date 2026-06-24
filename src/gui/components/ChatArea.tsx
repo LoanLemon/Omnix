@@ -1,4 +1,4 @@
-import { Bot, User, Loader2, Send, Image as ImageIcon, Volume2, Sparkles, Code2, Layout, Mic, MicOff, Music, X, Monitor, Activity, Workflow } from "lucide-react";
+import { Bot, User, Loader2, Send, Image as ImageIcon, Volume2, Sparkles, Code2, Layout, Mic, MicOff, Music, X, Monitor, Activity, Workflow, Plus, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Message } from "@shared/types";
 import React, { useState } from "react";
 import type { RefObject } from "react";
-import { ChevronDown, ChevronUp, Brain } from "lucide-react";
+import { ChevronDown, ChevronUp, Brain, ExternalLink } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 
 interface ChatAreaProps {
@@ -73,7 +73,14 @@ export function ChatArea({
     currentStepIndex,
     isPipelineRunning,
     startPipeline,
-    stopPipeline
+    stopPipeline,
+    chatTabs,
+    activeTabId,
+    selectTab,
+    openNewTab,
+    closeTab,
+    livePermissionError,
+    setLivePermissionError
   } = useApp();
 
   const totalProgress = Object.values(loadingProgress).length > 0
@@ -81,6 +88,31 @@ export function ChatArea({
     : 0;
 
   const [isThinkExpanded, setIsThinkExpanded] = useState(true);
+
+  const prevLengthRef = React.useRef(messages.length);
+
+  React.useEffect(() => {
+    if (scrollRef && 'current' in scrollRef && scrollRef.current) {
+      const container = scrollRef.current;
+      
+      const threshold = 180;
+      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
+      
+      const hasNewMessage = messages.length > prevLengthRef.current;
+      const isLastUser = messages.length > 0 && messages[messages.length - 1].role === 'user';
+      
+      if (hasNewMessage || isLastUser || isNearBottom) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (container) {
+              container.scrollTop = container.scrollHeight;
+            }
+          });
+        });
+      }
+      prevLengthRef.current = messages.length;
+    }
+  }, [messages, isGenerating, isModelLoading, isAnalyzing, isSummarizing, isThinkExpanded, scrollRef]);
 
   const extractThoughts = (content: string): { thoughts: string; cleanContent: string } | null => {
     const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/i;
@@ -110,6 +142,119 @@ export function ChatArea({
   return (
     <main className="flex-1 flex flex-col bg-background relative overflow-hidden h-full">
       <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]" />
+
+      {/* Horizontally scrolling tab bar */}
+      <div className="flex items-center justify-between border-b border-border/30 bg-muted/5 shrink-0 px-4 py-2 mt-1 select-none overflow-x-auto gap-2 scrollbar-none">
+        <div className="flex items-center gap-1.5 overflow-x-auto max-w-[80%] scrollbar-none py-1">
+          {(chatTabs || []).map((tab: any) => {
+            const isActive = tab.id === activeTabId;
+            const isTemp = tab.isTemporary || String(tab.id).startsWith("-");
+            return (
+              <div
+                key={tab.id}
+                onClick={() => selectTab(tab.id)}
+                className={`group flex items-center gap-2 h-7 px-3 rounded-md text-xs border font-mono transition-all duration-200 cursor-pointer ${
+                  isActive
+                    ? "bg-zinc-900 border-orange-500/50 text-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.1)] font-bold"
+                    : "bg-transparent border-zinc-800 text-muted-foreground hover:bg-zinc-800/30 hover:text-foreground"
+                }`}
+              >
+                {isTemp ? (
+                  <span className="flex items-center gap-1 text-[8px] px-1 py-0.5 rounded bg-red-950/40 border border-red-500/20 text-red-400 font-extrabold uppercase animate-pulse">
+                    TEMP
+                  </span>
+                ) : (
+                  <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-orange-500 shadow-[0_0_6px_rgba(249,115,22,0.6)]' : 'bg-zinc-600'}`} />
+                )}
+                
+                <span className="truncate max-w-[100px]" title={tab.name}>
+                  {tab.name}
+                </span>
+
+                {/* Close Button unless it's the last one remaining */}
+                {(chatTabs || []).length > 1 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closeTab(tab.id);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 h-4 w-4 rounded-full flex items-center justify-center hover:bg-zinc-800 hover:text-red-500 text-zinc-500 transition-all text-[10px]"
+                    title="Close and purge tab"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => openNewTab(false)}
+            className="h-7 px-2 bg-zinc-900 border border-border/40 hover:bg-accent text-[9px] font-mono hover:text-orange-500 font-bold flex items-center gap-1"
+            title="Open a new standard archived chat tab (id: 0)"
+          >
+            <Plus className="w-3 h-3 text-orange-500" />
+            <span>+ CHAT</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => openNewTab(true)}
+            className="h-7 px-2 bg-zinc-900/40 border border-red-950/30 hover:bg-red-950/20 text-[9px] font-mono hover:text-red-400 text-zinc-400 hover:border-red-500/30 flex items-center gap-1"
+            title="Open a temporary session. Purged on close/API response!"
+          >
+            <Clock className="w-3 h-3 text-red-500/70" />
+            <span>+ TEMP</span>
+          </Button>
+        </div>
+      </div>
+
+      {livePermissionError && (
+        <div className="mx-6 mt-4 p-4 rounded bg-red-950/35 border border-red-500/20 text-foreground relative z-10 animate-in fade-in duration-300">
+          <div className="flex gap-3">
+            <div className="p-1.5 rounded bg-red-500/10 text-red-400 h-fit">
+              <Monitor className="w-5 h-5 animate-pulse" />
+            </div>
+            <div className="flex-1 space-y-1">
+              <h4 className="text-xs font-mono font-bold uppercase tracking-wider text-red-400">
+                Screen Share Permission Denied or Not Supported
+              </h4>
+              <p className="text-[11px] text-zinc-400 leading-relaxed uppercase">
+                Please allow screen capture permission when prompted. If the prompt does not appear, or you face any issues, you can also open the application in a new tab.
+              </p>
+              <div className="flex items-center gap-3 pt-2">
+                <a 
+                  href={window.location.href} 
+                  target="_blank" 
+                  rel="noreferrer" 
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[9px] font-mono font-bold bg-orange-500 hover:bg-orange-600 text-black rounded transition-all"
+                >
+                  <ExternalLink className="w-3 h-3 text-black" />
+                  OPEN OMNIX IN NEW TAB
+                </a>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-7 px-2.5 text-[9px] font-mono hover:text-foreground text-zinc-500 hover:bg-zinc-800/30"
+                  onClick={() => setLivePermissionError(false)}
+                >
+                  DISMISS
+                </Button>
+              </div>
+            </div>
+            <button 
+              onClick={() => setLivePermissionError(false)}
+              className="text-zinc-500 hover:text-foreground transition-colors text-sm font-mono self-start"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
 
       {thoughtData && (
         <div className="border-b border-border/30 bg-muted/10 backdrop-blur-md shrink-0 transition-all duration-300">
@@ -169,7 +314,7 @@ export function ChatArea({
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <h2 className="text-2xl font-mono font-bold tracking-tighter uppercase text-foreground">Omnix_Studio_v0.4</h2>
+                  <h2 className="text-2xl font-mono font-bold tracking-tighter uppercase text-foreground">OMNIX_V0.5</h2>
                   <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-[0.3em] opacity-40">Orchestration_Interface</p>
                 </div>
               </div>
@@ -238,6 +383,12 @@ export function ChatArea({
                   </div>
                 </div>
                 <div className={`max-w-[85%] space-y-2 ${msg.role === "user" ? "text-right ml-auto" : "mr-auto"}`}>
+                  <div className={`flex items-center gap-1.5 mb-1 text-[8px] font-mono text-muted-foreground/50 uppercase tracking-widest ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <span>{msg.role === 'user' ? '0XUSR_NODE' : '0XBOT_NODE'}</span>
+                    <span>•</span>
+                    <Clock className="w-2.5 h-2.5 text-muted-foreground/35 inline" />
+                    <span className="opacity-90">{msg.timestamp || new Date().toLocaleTimeString()}</span>
+                  </div>
                   <div className={`relative px-5 py-4 text-sm leading-relaxed overflow-hidden border transition-all duration-500 ${
                     msg.role === "user" 
                       ? "bg-zinc-950/40 border-orange-500/20 text-foreground rounded-r-none rounded-l-xl" 

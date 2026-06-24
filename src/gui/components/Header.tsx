@@ -1,4 +1,4 @@
-import { Sparkles, Trash2, Database, Settings, Cpu, Bot, Image as ImageIcon, Music, Code2, Monitor, Zap, Globe, Sun, Moon } from "lucide-react";
+import { Sparkles, Trash2, Database, Settings, Cpu, Bot, Image as ImageIcon, Music, Code2, Monitor, Zap, Globe, Sun, Moon, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -29,7 +29,12 @@ export function Header({
     toggleLiveMode,
     setIsCoderMode,
     theme,
-    setTheme
+    setTheme,
+    showMemoryDashboard,
+    setShowMemoryDashboard,
+    setActiveTab,
+    emotionalState,
+    setEmotionalState
   } = useApp();
 
   const [isApiGuideOpen, setIsApiGuideOpen] = useState(false);
@@ -59,7 +64,7 @@ export function Header({
             <Sparkles className="w-4 h-4 text-orange-500" />
           </div>
           <div className="flex flex-col">
-            <h1 className="font-mono text-[11px] font-bold tracking-[0.2em] uppercase text-foreground/90">Omnix.ai</h1>
+            <h1 className="font-mono text-[11px] font-bold tracking-[0.2em] uppercase text-foreground/90">OMNIX</h1>
             <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest opacity-60">Control Center</span>
           </div>
         </div>
@@ -90,37 +95,84 @@ export function Header({
                 <SelectItem value="director" className="focus:bg-orange-500/10 focus:text-orange-500">
                   <div className="flex items-center gap-2">
                     <Zap className="w-3 h-3" />
-                    Director Auto
+                    Director (Auto)
                   </div>
                 </SelectItem>
                 <SelectItem value="text" className="focus:bg-blue-500/10 focus:text-blue-500">
                   <div className="flex items-center gap-2">
                     <Bot className="w-3 h-3" />
-                    LLM Text Sync
+                    Text
                   </div>
                 </SelectItem>
                 <SelectItem value="image" className="focus:bg-purple-500/10 focus:text-purple-500">
                   <div className="flex items-center gap-2">
                     <ImageIcon className="w-3 h-3" />
-                    Flux Image Gen
+                    Image
                   </div>
                 </SelectItem>
                 <SelectItem value="music" className="focus:bg-pink-500/10 focus:text-pink-500">
                   <div className="flex items-center gap-2">
                     <Music className="w-3 h-3" />
-                    Sonic Music Gen
+                    Music
                   </div>
                 </SelectItem>
                 <SelectItem value="sandbox" className="focus:bg-green-500/10 focus:text-green-500">
                   <div className="flex items-center gap-2">
                     <Code2 className="w-3 h-3" />
-                    Coder Sandbox
+                    Coder
                   </div>
                 </SelectItem>
                 <SelectItem value="live" className="focus:bg-red-500/10 focus:text-red-500">
                   <div className="flex items-center gap-2">
                     <Monitor className="w-3 h-3" />
                     Realtime Live
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col items-end">
+            <span className="text-[8px] font-mono text-muted-foreground uppercase tracking-widest mb-0.5 opacity-50">Cognitive State</span>
+            <Select value={emotionalState} onValueChange={(val) => setEmotionalState(val as any)}>
+              <SelectTrigger className="h-7 w-28 bg-muted/30 border-border text-[10px] text-foreground font-mono focus:ring-orange-500/30 hover:border-orange-500/30 transition-all rounded-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-popover border border-border/50 text-popover-foreground text-[10px] font-mono shadow-md">
+                <SelectItem value="Focused" className="focus:bg-zinc-500/10 focus:text-zinc-300">
+                  <div className="flex items-center gap-2 text-zinc-400">
+                    <div className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
+                    Focused
+                  </div>
+                </SelectItem>
+                <SelectItem value="Curious" className="focus:bg-yellow-500/10 focus:text-yellow-500">
+                  <div className="flex items-center gap-2 text-yellow-500">
+                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" />
+                    Curious
+                  </div>
+                </SelectItem>
+                <SelectItem value="Creative" className="focus:bg-purple-500/10 focus:text-purple-500">
+                  <div className="flex items-center gap-2 text-purple-400">
+                    <div className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                    Creative
+                  </div>
+                </SelectItem>
+                <SelectItem value="Analytical" className="focus:bg-blue-500/10 focus:text-blue-500">
+                  <div className="flex items-center gap-2 text-blue-400">
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    Analytical
+                  </div>
+                </SelectItem>
+                <SelectItem value="Excited" className="focus:bg-pink-500/10 focus:text-pink-500">
+                  <div className="flex items-center gap-2 text-pink-400">
+                    <div className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse" />
+                    Excited
+                  </div>
+                </SelectItem>
+                <SelectItem value="Thoughtful" className="focus:bg-emerald-500/10 focus:text-emerald-500">
+                  <div className="flex items-center gap-2 text-emerald-400">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    Thoughtful
                   </div>
                 </SelectItem>
               </SelectContent>
@@ -150,6 +202,20 @@ export function Header({
           </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-orange-500 hover:bg-orange-500/10" onClick={clearCache} title="Clear Model Cache">
             <Database className="w-4 h-4" />
+          </Button>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className={`h-8 w-8 transition-all ${showMemoryDashboard ? 'text-orange-500 bg-orange-500/10' : 'text-muted-foreground'} hover:text-orange-500 hover:bg-orange-500/10`} 
+            onClick={() => {
+              setShowMemoryDashboard(!showMemoryDashboard);
+              if (!showMemoryDashboard) {
+                setActiveTab("memory");
+              }
+            }} 
+            title="Toggle Memory & State Dashboard"
+          >
+            <Brain className="w-4 h-4" />
           </Button>
           <Button 
             variant="ghost" 

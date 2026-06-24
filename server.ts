@@ -6,7 +6,7 @@ import cors from "cors";
 import multer from "multer";
 import { createServer } from "http";
 import open from "open";
-import { setupWebSockets, dispatchTask, handleHealthCheck } from "./src/engine/socketHandler.ts";
+import { setupWebSockets, dispatchTask, handleHealthCheck, archiveReqIdHistory, purgeReqIdHistory } from "./src/engine/socketHandler.ts";
 
 process.on('uncaughtException', (err) => {
   console.error('💥 Uncaught Exception:', err);
@@ -53,16 +53,64 @@ async function startServer() {
   }
 
   app.use((req, res, next) => {
+    const origin = req.headers.origin || "*";
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE, PATCH, HEAD");
+    res.setHeader("Access-Control-Allow-Headers", req.headers["access-control-request-headers"] || "Content-Type, Authorization, X-Requested-With, x-req-id, reqid, reqId, Accept");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    
     if (req.headers["access-control-request-private-network"]) {
       res.setHeader("Access-Control-Allow-Private-Network", "true");
     }
+    
     if (req.method === "OPTIONS") {
       res.setHeader("Access-Control-Allow-Private-Network", "true");
+      return res.status(200).end(); // Respond immediately to preflight OPTIONS requests to bypass CORS
     }
     next();
   });
-  app.use(cors());
   app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  app.use(express.text({ type: '*/*', limit: '50mb' }));
+
+  // Normalization middleware to parse stringified JSON or urlencoded JSON from PowerShell/clients
+  app.use((req, res, next) => {
+    if (typeof req.body === "string") {
+      const trimmed = req.body.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          req.body = JSON.parse(trimmed);
+        } catch (e) {
+          // Leave as raw string
+        }
+      } else {
+        try {
+          const params = new URLSearchParams(trimmed);
+          const obj: any = {};
+          let hasKeys = false;
+          for (const [key, val] of params.entries()) {
+            obj[key] = val;
+            hasKeys = true;
+          }
+          if (hasKeys) {
+            const keys = Object.keys(obj);
+            if (keys.length === 1 && keys[0].trim().startsWith("{")) {
+              try {
+                req.body = JSON.parse(keys[0]);
+              } catch {
+                req.body = obj;
+              }
+            } else {
+              req.body = obj;
+            }
+          }
+        } catch (e) {
+          // Leave as raw string
+        }
+      }
+    }
+    next();
+  });
 
   // Relay Control
   app.post("/api/server/relay", (req, res) => {
@@ -166,6 +214,26 @@ async function startServer() {
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
+  });
+
+  // Archive isolated chat history for a reqId
+  app.post("/api/archive-history", (req, res) => {
+    const { oldReqId, newReqId } = req.body;
+    if (oldReqId !== undefined && newReqId !== undefined) {
+      archiveReqIdHistory(String(oldReqId), String(newReqId));
+      return res.json({ success: true, message: `Archived ${oldReqId} to ${newReqId}` });
+    }
+    return res.status(400).json({ error: "oldReqId and newReqId are required" });
+  });
+
+  // Purge isolated chat history for a reqId
+  app.post("/api/purge-history", (req, res) => {
+    const { reqId } = req.body;
+    if (reqId !== undefined) {
+      purgeReqIdHistory(String(reqId));
+      return res.json({ success: true, message: `Purged reqId: ${reqId}` });
+    }
+    return res.status(400).json({ error: "reqId is required" });
   });
 
   // Vision Analysis

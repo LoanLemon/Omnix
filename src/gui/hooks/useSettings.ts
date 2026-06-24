@@ -9,7 +9,7 @@ export function useSettings() {
 
   const [enableRAG, setEnableRAG] = useState<boolean>(() => {
     const saved = localStorage.getItem("omnix_enable_rag");
-    return saved === "true";
+    return saved === null ? true : saved === "true";
   });
 
   const [speakEnabled, setSpeakEnabled] = useState<boolean>(() => {
@@ -49,6 +49,11 @@ export function useSettings() {
     return saved === "true";
   });
 
+  const [enableFocusTopics, setEnableFocusTopics] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_enable_focus_topics");
+    return saved === null ? true : saved === "true";
+  });
+
   const [thinkEnabled, setThinkEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem("omnix_think_enabled");
     return saved === "true";
@@ -81,6 +86,10 @@ export function useSettings() {
   useEffect(() => {
     localStorage.setItem("omnix_enable_rag", enableRAG.toString());
   }, [enableRAG]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_enable_focus_topics", enableFocusTopics.toString());
+  }, [enableFocusTopics]);
 
   useEffect(() => {
     localStorage.setItem("omnix_think_enabled", thinkEnabled.toString());
@@ -133,6 +142,8 @@ export function useSettings() {
     setIsCoderMode,
     enableRelayMode,
     setEnableRelayMode,
+    enableFocusTopics,
+    setEnableFocusTopics,
     thinkEnabled,
     setThinkEnabled,
     previousTextModel,

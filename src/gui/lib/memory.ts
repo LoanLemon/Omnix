@@ -39,6 +39,17 @@ export class VectorStore {
     });
   }
 
+  async getAll(): Promise<MemoryEntry[]> {
+    if (!this.db) await this.init();
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(this.storeName, "readonly");
+      const store = transaction.objectStore(this.storeName);
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result as MemoryEntry[]);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   async search(queryEmbedding: number[], topK = 3, threshold = 0.5): Promise<MemoryEntry[]> {
     if (!this.db) await this.init();
     return new Promise((resolve, reject) => {

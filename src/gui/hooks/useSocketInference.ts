@@ -15,7 +15,7 @@ export function useSocketInference(
   const [isConnected, setIsConnected] = useState(false);
   const [activeAuthRequest, setActiveAuthRequest] = useState<{ authId: string; webdomain: string; category: string } | null>(null);
 
-  const respondToAuth = useCallback((authId: string, decision: "once" | "always" | "never") => {
+  const respondToAuth = useCallback((authId: string, decision: "once" | "always" | "never" | "block_once") => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
         type: "AUTHORIZATION_RESPONSE",
@@ -180,9 +180,9 @@ export function useSocketInference(
               }
             }
 
-            const result = await browserEngine.runInference(category, finalInput, {
-              ...options,
-              progress_callback: (p: any) => {
+            let result;
+            if (category === "director") {
+              result = await browserEngine.runDirectorInference(finalInput, options?.modelId, (p: any) => {
                 if (p.status === "progress") {
                   setLoadingProgress(prev => ({
                     ...prev,
@@ -192,8 +192,23 @@ export function useSocketInference(
                 if (socket.readyState === WebSocket.OPEN) {
                   socket.send(JSON.stringify({ type: "PROGRESS_UPDATE", requestId, progress: p }));
                 }
-              }
-            });
+              });
+            } else {
+              result = await browserEngine.runInference(category, finalInput, {
+                ...options,
+                progress_callback: (p: any) => {
+                  if (p.status === "progress") {
+                    setLoadingProgress(prev => ({
+                      ...prev,
+                      [p.file]: { progress: p.progress, status: `Downloading ${p.file}` }
+                    }));
+                  }
+                  if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: "PROGRESS_UPDATE", requestId, progress: p }));
+                  }
+                }
+              });
+            }
             
             setLoadingProgress({});
             setIsModelLoading(false);
@@ -221,7 +236,7 @@ export function useSocketInference(
                   } else if (category === "stt") {
                     updated.content = result.text || result;
                   } else if (category === "director") {
-                    updated.content = `Routed intent: ${result.intent || JSON.stringify(result)}`;
+                    updated.content = `Routed intent: ${result.category || result.intent || JSON.stringify(result)}`;
                   } else {
                     updated.content = typeof result === "string" ? result : (result.response || JSON.stringify(result));
                   }

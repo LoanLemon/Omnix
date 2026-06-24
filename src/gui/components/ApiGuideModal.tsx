@@ -707,7 +707,7 @@ fetch("http://localhost:\${PORT}/api/text", {
           
           {/* Footer Info */}
           <div className="px-6 py-3 border-t border-zinc-800 bg-zinc-950 text-[10px] font-mono text-zinc-500 flex justify-between items-center">
-            <span>OMNIX ENGINE v0.4.0 • HEADLESS_STABLE</span>
+            <span>OMNIX ENGINE v0.5.0 • HEADLESS_STABLE</span>
             <div className="flex gap-4">
               <span className="flex items-center gap-1"><div className="w-1 h-1 rounded-full bg-emerald-500" /> API READY</span>
               <span className="flex items-center gap-1"><div className="w-1 h-1 rounded-full bg-blue-500" /> WS_SESSION: {PORT}</span>

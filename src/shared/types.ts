@@ -1,5 +1,14 @@
 export type ChatMode = "director" | "text" | "image" | "music" | "sandbox" | "live";
 
+export interface FocusTopic {
+  name: string;
+  energy: number;
+  decayRate: number;
+}
+
+export type EmotionalState = "Focused" | "Curious" | "Creative" | "Analytical" | "Excited" | "Thoughtful";
+
+
 export interface SandboxFile {
   name: string;
   content: string;
@@ -13,6 +22,7 @@ export interface Message {
   image?: string;
   audio?: string;
   hidden?: boolean;
+  timestamp?: string;
   stats?: { tps: string; tokens: number };
   isProgress?: boolean;
   isQueued?: boolean;
@@ -24,6 +34,17 @@ export interface Message {
     status: "pending" | "success" | "error";
     result?: string;
   };
+}
+
+export interface ChatTab {
+  id: string;
+  name: string;
+  messages: Message[];
+  sandboxFiles: SandboxFile[];
+  generatedImage: string | null;
+  chatMode: ChatMode;
+  isCoderMode: boolean;
+  isTemporary?: boolean;
 }
 
 export interface LogEntry {

@@ -1,5 +1,6 @@
 import { RawImage } from "@huggingface/transformers";
 import { MODELS } from "@shared/modelList";
+import { float32ArrayToWav } from "./audioUtils";
 
 // Globally override and silence the CORS content-length headers warning on main thread
 const originalWarn = console.warn;
@@ -45,6 +46,7 @@ export class BrowserModelEngine {
   }> = new Map();
 
   // Keep track of lightweight load states locally for synchronous UI stats queries
+  public useLocalServerApi = false;
   private currentModelId: string | null = null;
   private hasDirector: boolean = false;
   private hasStt: boolean = false;
@@ -135,7 +137,7 @@ export class BrowserModelEngine {
               new Uint8Array(result.data),
               result.width,
               result.height,
-              4
+              result.channels || 4
             );
             resolveRequest(pending, reconstructed);
           } else {
@@ -183,11 +185,33 @@ export class BrowserModelEngine {
   }
 
   async init() {
+    const isElectron = typeof window !== "undefined" && !!(window as any).electron;
+    if (!isElectron) {
+      try {
+        console.log("🔍 Checking if local Omnix server is running at http://localhost:9777...");
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500);
+        const res = await fetch("http://localhost:9777/api/health", { signal: controller.signal });
+        clearTimeout(timeoutId);
+        this.useLocalServerApi = true;
+        console.log("✅ Omnix local server detected running! Enabling local server API mode for AI requests.");
+      } catch (e) {
+        console.log("❌ Omnix local server not running or unreachable. Using browser-side Web Worker.");
+        this.useLocalServerApi = false;
+      }
+    } else {
+      this.useLocalServerApi = false;
+    }
+
+    if (this.useLocalServerApi) {
+      return { success: true, mode: "api" };
+    }
     return this.postToWorker("init");
   }
 
   setSafeMode(val: boolean) {
     this.isLowMemory = val;
+    if (this.useLocalServerApi) return;
     this.postToWorker("setSafeMode", { val }).catch(e => {
        console.error("Error setting safe mode in worker:", e);
     });
@@ -203,14 +227,28 @@ export class BrowserModelEngine {
       this.currentModelId = modelKey;
     }
 
+    if (this.useLocalServerApi) {
+      console.log(`🚀 Omnix local server active. Bypassing browser-side model download/load for ${modelKey}`);
+      if (progressCallback) {
+        progressCallback({ status: "init", file: "Omnix Local API Engine" });
+        setTimeout(() => {
+          progressCallback({ status: "loaded", file: "Omnix Local API Engine" });
+        }, 100);
+      }
+      this.notify();
+      return { success: true, mode: "api" };
+    }
+
     const res = await this.postToWorker("loadModel", { category, modelId }, progressCallback);
     this.notify();
     return res;
   }
 
   async unloadDirector() {
-    if (this.isLowMemory) {
-      this.hasDirector = false;
+    this.hasDirector = false;
+    if (this.useLocalServerApi) {
+      this.notify();
+      return { success: true };
     }
     const res = await this.postToWorker("unloadDirector");
     this.notify();
@@ -223,6 +261,10 @@ export class BrowserModelEngine {
     this.hasStt = false;
     this.hasTts = false;
     this.hasEmbedding = false;
+    if (this.useLocalServerApi) {
+      this.notify();
+      return { success: true };
+    }
     const res = await this.postToWorker("clear");
     this.notify();
     return res;
@@ -258,6 +300,22 @@ export class BrowserModelEngine {
 
   async runDirectorInference(input: string, modelId?: string, progressCallback?: (p: any) => void) {
     this.hasDirector = true;
+    if (this.useLocalServerApi) {
+      this.notify();
+      try {
+        const response = await fetch("http://localhost:9777/api/director", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: input, modelId })
+        });
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+        return data.intent || data;
+      } catch (err: any) {
+        console.error("Local API Director inference failed:", err);
+        throw err;
+      }
+    }
     return this.postToWorker("runDirectorInference", { input, modelId }, progressCallback);
   }
 
@@ -289,6 +347,148 @@ export class BrowserModelEngine {
       this.currentModelId = `${category}:${modelId}`;
     }
 
+    if (this.useLocalServerApi) {
+      console.log(`📡 Direct API request to Omnix server for ${category}...`);
+      
+      let url = "http://localhost:9777/api/text";
+      let body: any = {};
+      let isMultipart = false;
+      const formData = new FormData();
+
+      if (category === "text" || category === "coder") {
+        url = "http://localhost:9777/api/text";
+        body = {
+          prompt: input,
+          systemPrompt: options.systemPrompt,
+          modelId: modelId,
+          temperature: options.temperature,
+          top_p: options.top_p,
+          maxTokens: options.maxTokens
+        };
+      } else if (category === "director") {
+        url = "http://localhost:9777/api/director";
+        body = {
+          prompt: input,
+          modelId: modelId
+        };
+      } else if (category === "vision") {
+        url = "http://localhost:9777/api/vision";
+        isMultipart = true;
+        
+        let blob: Blob;
+        if (typeof input === "string" && input.startsWith("data:")) {
+          const parts = input.split(",");
+          const mimeType = parts[0].match(/:(.*?);/)?.[1] || "image/jpeg";
+          const byteString = atob(parts[1] || input);
+          const arrayBuffer = new ArrayBuffer(byteString.length);
+          const uint8Array = new Uint8Array(arrayBuffer);
+          for (let i = 0; i < byteString.length; i++) {
+            uint8Array[i] = byteString.charCodeAt(i);
+          }
+          blob = new Blob([uint8Array], { type: mimeType });
+        } else if (input instanceof Blob) {
+          blob = input;
+        } else {
+          blob = new Blob([input], { type: "image/jpeg" });
+        }
+        
+        formData.append("image", blob, "image.jpg");
+        formData.append("prompt", options.prompt || "Analyze this image");
+        if (modelId) formData.append("modelId", modelId);
+      } else if (category === "stt") {
+        url = "http://localhost:9777/api/stt";
+        isMultipart = true;
+        
+        let blob: Blob;
+        if (input instanceof Float32Array) {
+          blob = float32ArrayToWav(input, 16000);
+        } else if (typeof input === "string") {
+          const byteCharacters = atob(input);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          blob = new Blob([byteArray], { type: "audio/wav" });
+        } else if (input instanceof Blob) {
+          blob = input;
+        } else {
+          blob = new Blob([input], { type: "audio/wav" });
+        }
+        
+        formData.append("audio", blob, "audio.wav");
+        if (modelId) formData.append("modelId", modelId);
+      } else if (category === "tts") {
+        url = "http://localhost:9777/api/tts";
+        body = {
+          text: input,
+          modelId: modelId || "kokoro-82m"
+        };
+      } else if (category === "image-gen") {
+        url = "http://localhost:9777/api/image";
+        body = {
+          prompt: input,
+          modelId: modelId
+        };
+      } else if (category === "music-gen") {
+        url = "http://localhost:9777/api/music";
+        body = {
+          prompt: input,
+          modelId: modelId
+        };
+      }
+
+      try {
+        const fetchOptions: RequestInit = {
+          method: "POST"
+        };
+        if (isMultipart) {
+          fetchOptions.body = formData;
+        } else {
+          fetchOptions.headers = { "Content-Type": "application/json" };
+          fetchOptions.body = JSON.stringify(body);
+        }
+
+        const res = await fetch(url, fetchOptions);
+        if (!res.ok) {
+          throw new Error(`Local API request failed with status ${res.status}`);
+        }
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        if (category === "text" || category === "coder") {
+          let outputText = data.response || "";
+          if (data.think) {
+            outputText = `<think>${data.think}</think>\n${outputText}`;
+          }
+          if (onToken) {
+            onToken(outputText);
+          }
+          return outputText;
+        } else if (category === "director") {
+          return data.intent || data;
+        } else if (category === "vision") {
+          let outputText = data.response || "";
+          if (data.think) {
+            outputText = `<think>${data.think}</think>\n${outputText}`;
+          }
+          if (onToken) {
+            onToken(outputText);
+          }
+          return outputText;
+        } else if (category === "stt") {
+          return data.text || data;
+        } else if (category === "image-gen") {
+          return data.image || data;
+        } else {
+          return data;
+        }
+      } catch (err: any) {
+        console.error(`Local API call failed for ${category}:`, err);
+        throw err;
+      }
+    }
+
     const res = await this.postToWorker(
       "runInference",
       { category, input, options },
@@ -312,7 +512,43 @@ export class BrowserModelEngine {
     canvas.width = raw.width;
     canvas.height = raw.height;
     const ctx = canvas.getContext('2d')!;
-    const imageData = new ImageData(new Uint8ClampedArray(raw.data), raw.width, raw.height);
+    
+    // Robustly handle different raw image channels (like 3 channels RGB)
+    const numPixels = raw.width * raw.height;
+    let rgbaData: Uint8ClampedArray;
+    
+    if (raw.data.length === numPixels * 4) {
+      rgbaData = new Uint8ClampedArray(raw.data);
+    } else if (raw.data.length === numPixels * 3) {
+      rgbaData = new Uint8ClampedArray(numPixels * 4);
+      for (let i = 0; i < numPixels; ++i) {
+        const i3 = i * 3;
+        const i4 = i * 4;
+        rgbaData[i4] = raw.data[i3];         // R
+        rgbaData[i4 + 1] = raw.data[i3 + 1]; // G
+        rgbaData[i4 + 2] = raw.data[i3 + 2]; // B
+        rgbaData[i4 + 3] = 255;              // A
+      }
+    } else if (raw.data.length === numPixels) {
+      rgbaData = new Uint8ClampedArray(numPixels * 4);
+      for (let i = 0; i < numPixels; ++i) {
+        const i4 = i * 4;
+        const val = raw.data[i];
+        rgbaData[i4] = val;
+        rgbaData[i4 + 1] = val;
+        rgbaData[i4 + 2] = val;
+        rgbaData[i4 + 3] = 255;
+      }
+    } else {
+      rgbaData = new Uint8ClampedArray(numPixels * 4);
+      const copyLen = Math.min(raw.data.length, numPixels * 4);
+      rgbaData.set(raw.data.subarray ? raw.data.subarray(0, copyLen) : raw.data.slice(0, copyLen));
+      for (let i = Math.floor(copyLen / 4); i < numPixels; ++i) {
+        rgbaData[i * 4 + 3] = 255;
+      }
+    }
+
+    const imageData = new ImageData(rgbaData as any, raw.width, raw.height);
     ctx.putImageData(imageData, 0, 0);
     return canvas.toDataURL('image/png');
   }

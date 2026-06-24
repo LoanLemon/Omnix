@@ -200,6 +200,9 @@ export function setupWebSockets(server: any) {
                 console.log(`🎁 Temp grace access set for domain: ${pending.webdomain}`);
               }
               pending.resolve(true);
+            } else if (decision === "block_once") {
+              console.log(`🛡️ User blocked this attempt from domain: ${pending.webdomain} (one-time deny)`);
+              pending.resolve(false);
             } else {
               permissions[pending.webdomain] = "deny";
               savePermissions();
@@ -311,8 +314,11 @@ function processQueue() {
 }
 
 export async function dispatchTask(category: string, input: any, options: any = {}): Promise<any> {
-  const reqId = options.reqId;
-  if (reqId && (category === "text" || category === "vision")) {
+  const rawReqId = options.reqId !== undefined && options.reqId !== null && options.reqId !== "" ? options.reqId : "0";
+  const reqId = String(rawReqId);
+  options.reqId = reqId;
+
+  if (category === "text" || category === "vision") {
     const history = reqIdChatHistories.get(reqId) || [];
     const chatHistory = [...history, { role: "user" as const, content: category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : JSON.stringify(input)) }];
     options.chatHistory = chatHistory;
@@ -439,10 +445,27 @@ export async function dispatchTask(category: string, input: any, options: any = 
           }
           reqIdChatHistories.set(reqId, history);
           console.log(`📝 Appended interaction to isolated history for reqId: ${reqId} (new len: ${history.length})`);
+
+          // If a reqId is a negative value, it is a temporary chat and must be purged when the chat window is closed/API response is sent.
+          const nId = Number(reqId);
+          if (!isNaN(nId) && nId < 0) {
+            console.log(`🧹 Purging temporary isolated history for negative reqId: ${reqId}`);
+            reqIdChatHistories.delete(reqId);
+          }
         }
         resolve(data); 
       }, 
-      reject: (err: any) => { clearTimeout(queueTimeout); reject(err); }, 
+      reject: (err: any) => { 
+        clearTimeout(queueTimeout); 
+        if (reqId) {
+          const nId = Number(reqId);
+          if (!isNaN(nId) && nId < 0) {
+            console.log(`🧹 Purging temporary isolated history on reject for negative reqId: ${reqId}`);
+            reqIdChatHistories.delete(reqId);
+          }
+        }
+        reject(err); 
+      }, 
       requestId,
       priority: options.priority || 0,
       createdAt: Date.now(),
@@ -450,6 +473,20 @@ export async function dispatchTask(category: string, input: any, options: any = 
     });
     processQueue();
   });
+}
+
+export function archiveReqIdHistory(oldReqId: string, newReqId: string) {
+  const history = reqIdChatHistories.get(oldReqId);
+  if (history) {
+    reqIdChatHistories.set(newReqId, history);
+    reqIdChatHistories.delete(oldReqId);
+    console.log(`📦 Archived backend history from ${oldReqId} to ${newReqId} (length: ${history.length})`);
+  }
+}
+
+export function purgeReqIdHistory(reqId: string) {
+  reqIdChatHistories.delete(reqId);
+  console.log(`🧹 Explicitly purged history index for reqId: ${reqId}`);
 }
 
 export async function handleHealthCheck(origin: string): Promise<{ allowed: boolean; error?: string }> {

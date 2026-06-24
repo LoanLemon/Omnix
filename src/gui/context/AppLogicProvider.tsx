@@ -21,8 +21,7 @@ import { usePipelineGeneration } from "@/hooks/usePipelineGeneration";
 import { AppProvider } from "./AppContext";
 
 // Types
-import { LogEntry, SandboxFile } from "@shared/types";
-import { TEXT_SYSTEM_PROMPT, CODER_SYSTEM_PROMPT, getModePrompt } from "@shared/prompts";
+import { LogEntry, SandboxFile, ChatTab, FocusTopic, EmotionalState } from "@shared/types";
 
 export function AppLogicProvider({ children }: { children: ReactNode }) {
   // --- Settings & Persistence ---
@@ -43,27 +42,413 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setMinimizeToTray,
     enableRelayMode,
     setEnableRelayMode,
+    enableFocusTopics,
+    setEnableFocusTopics,
     thinkEnabled,
     setThinkEnabled,
   } = useSettings();
 
   // --- State ---
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const addLog = useCallback((message: string, type: "info" | "error" | "success" = "info") => {
+    setLogs((prev) => [
+      ...prev,
+      { timestamp: new Date().toLocaleTimeString(), message, type },
+    ].slice(-50));
+  }, []);
+
   const [messages, setMessages] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [didError, setDidError] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+
+  const [focusTopics, setFocusTopics] = useState<FocusTopic[]>([]);
+  const [emotionalState, setEmotionalState] = useState<EmotionalState>("Focused");
+
+  // --- Focus Topics and Emotional State Helpers & Effects ---
+
+  const capitalizeWords = useCallback((str: string): string => {
+    return str
+      .split(/\s+/)
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ");
+  }, []);
+
+  const adjustEmotionalStateForTopic = useCallback((topicName: string) => {
+    const t = topicName.toLowerCase();
+    if (/\b(math|science|physics|chemistry|logic|coder|coding|programming|algorithm|rust|python|javascript|database|query|sql|react|server|engine|model|network|telemetry|token|inference)\b/i.test(t)) {
+      setEmotionalState("Analytical");
+    } else if (/\b(art|music|design|fiction|novel|poetry|drawing|creative|ui|ux|color|palette|illustration|song|sound|beats|lyrics|craft|craftsmanship)\b/i.test(t)) {
+      setEmotionalState("Creative");
+    } else if (/\b(game|play|fun|awesome|incredible|win|fast|excited|party|celebrate|achievement|sport|cool|thrilled)\b/i.test(t)) {
+      setEmotionalState("Excited");
+    } else if (/\b(mind|consciousness|philosophy|meaning|future|ethics|moral|meditation|spirit|human|nature|universe|life|wisdom|think|thought)\b/i.test(t)) {
+      setEmotionalState("Thoughtful");
+    } else if (/\b(why|how|what|question|space|alien|mystery|curious|curiosity|exploration|discovery|seek|find|learn)\b/i.test(t)) {
+      setEmotionalState("Curious");
+    } else {
+      setEmotionalState("Focused");
+    }
+  }, []);
+
+  const extractTopicFromText = useCallback((text: string): string | null => {
+    if (!text || text.trim().length < 3) return null;
+    
+    // Clean up text
+    const cleanText = text.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "").trim();
+    
+    // Pattern matches
+    const patterns = [
+      /about\s+([a-z0-9\s]{3,25})/i,
+      /discuss\s+([a-z0-9\s]{3,25})/i,
+      /explain\s+([a-z0-9\s]{3,25})/i,
+      /what\s+is\s+([a-z0-9\s]{3,25})/i,
+      /tell\s+me\s+about\s+([a-z0-9\s]{3,25})/i,
+      /how\s+does\s+([a-z0-9\s]{3,25})/i,
+      /learn\s+about\s+([a-z0-9\s]{3,25})/i,
+      /familiar\s+with\s+([a-z0-9\s]{3,25})/i,
+      /think\s+about\s+([a-z0-9\s]{3,25})/i,
+      /talk\s+about\s+([a-z0-9\s]{3,25})/i,
+      /interested\s+in\s+([a-z0-9\s]{3,25})/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        const candidate = match[1].trim();
+        const words = candidate.split(/\s+/).slice(0, 3).join(" ");
+        if (words.length >= 3) {
+          return capitalizeWords(words);
+        }
+      }
+    }
+    
+    // Fallback: extract meaningful non-filler words
+    const stopWords = new Set([
+      "the", "a", "an", "and", "or", "but", "if", "then", "else", "when", "where",
+      "who", "what", "why", "how", "is", "are", "was", "were", "be", "been", "being",
+      "to", "of", "in", "on", "at", "by", "for", "with", "about", "against", "between",
+      "into", "through", "during", "before", "after", "above", "below", "from", "up",
+      "down", "in", "out", "on", "off", "over", "under", "again", "further", "then",
+      "once", "here", "there", "when", "where", "why", "how", "all", "any", "both",
+      "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+      "only", "own", "same", "so", "than", "too", "very", "s", "t", "can", "will",
+      "just", "don", "should", "now", "i", "you", "he", "she", "it", "we", "they",
+      "me", "him", "her", "us", "them", "my", "your", "his", "her", "its", "our", "their",
+      "am", "have", "has", "had", "do", "does", "did", "please", "hello", "hi", "hey"
+    ]);
+    
+    const words = cleanText.split(/\s+/);
+    const contentWords = words.filter(w => w.length > 2 && !stopWords.has(w.toLowerCase()));
+    
+    if (contentWords.length > 0) {
+      const topic = contentWords.slice(0, 2).join(" ");
+      return capitalizeWords(topic);
+    }
+    
+    return null;
+  }, [capitalizeWords]);
+
+  // Decay timer effect (0.1% starting decay rate, increments by 0.1% every second)
+  useEffect(() => {
+    if (!enableFocusTopics) {
+      if (focusTopics.length > 0) setFocusTopics([]);
+      return;
+    }
+    const timer = setInterval(() => {
+      setFocusTopics(prev => {
+        if (prev.length === 0) return prev;
+        const updated = prev.map(t => ({
+          ...t,
+          energy: t.energy - t.decayRate,
+          decayRate: t.decayRate + 0.1
+        })).filter(t => t.energy > 0);
+        return updated;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [enableFocusTopics, focusTopics.length]);
+
+  const processedMessageRef = useRef<Set<string>>(new Set());
+
+  // Watch messages for user turns to extract topics
+  useEffect(() => {
+    if (!enableFocusTopics || messages.length === 0) return;
+    
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg && lastMsg.role === "user" && lastMsg.content) {
+      const msgKey = lastMsg.id || (lastMsg.content + "_" + lastMsg.timestamp);
+      if (processedMessageRef.current.has(msgKey)) return;
+      processedMessageRef.current.add(msgKey);
+
+      const text = lastMsg.content;
+      const extractedTopic = extractTopicFromText(text);
+      if (extractedTopic) {
+        setFocusTopics(prev => {
+          const lowerExtracted = extractedTopic.toLowerCase();
+          
+          // Check if user is mentioning an existing topic
+          const existingIndex = prev.findIndex(t => t.name.toLowerCase() === lowerExtracted);
+          if (existingIndex !== -1) {
+            addLog(`Focus Topics: Reinforcing "${prev[existingIndex].name}" (+10% focus energy)`, "success");
+            const updated = [...prev];
+            updated[existingIndex] = {
+              ...updated[existingIndex],
+              energy: Math.min(100, updated[existingIndex].energy + 10),
+              decayRate: 0.1
+            };
+            adjustEmotionalStateForTopic(prev[existingIndex].name);
+            return updated;
+          }
+
+          // New topic energy starting logic
+          let initialEnergy = 50;
+          if (prev.length === 1) initialEnergy = 40;
+          else if (prev.length >= 2) initialEnergy = 33;
+
+          // Curious state bonus (+15% focus energy)
+          if (emotionalState === "Curious") {
+            initialEnergy = Math.min(100, initialEnergy + 15);
+            addLog(`Focus Topics: Curious state boosted starting focus by +15%!`, "info");
+          }
+
+          const newTopic: FocusTopic = {
+            name: extractedTopic,
+            energy: initialEnergy,
+            decayRate: 0.1
+          };
+
+          addLog(`Focus Topics: New topic detected - "${extractedTopic}" (${initialEnergy}% focus energy)`, "success");
+          adjustEmotionalStateForTopic(extractedTopic);
+
+          if (prev.length < 3) {
+            return [...prev, newTopic];
+          } else {
+            // Find lowest energy topic and replace it
+            let lowestIdx = 0;
+            let lowestEnergy = prev[0].energy;
+            for (let i = 1; i < prev.length; i++) {
+              if (prev[i].energy < lowestEnergy) {
+                lowestEnergy = prev[i].energy;
+                lowestIdx = i;
+              }
+            }
+            addLog(`Focus Topics: Replacing lowest energy topic "${prev[lowestIdx].name}" with "${extractedTopic}"`, "info");
+            const updated = [...prev];
+            updated[lowestIdx] = newTopic;
+            return updated;
+          }
+        });
+      }
+    }
+  }, [messages, enableFocusTopics, emotionalState, addLog, extractTopicFromText, adjustEmotionalStateForTopic]);
   
   const [sandboxFiles, setSandboxFiles] = useState<SandboxFile[]>([]);
   const sandboxFilesRef = useRef(sandboxFiles);
   useEffect(() => { sandboxFilesRef.current = sandboxFiles; }, [sandboxFiles]);
 
-  const [activeTab, setActiveTab] = useState<"chat" | "sandbox" | "gallery">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "sandbox" | "gallery" | "memory">("chat");
   const [isCoderMode, setIsCoderMode] = useState(false);
   const [previousTextModel, setPreviousTextModel] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [showMemoryDashboard, setShowMemoryDashboard] = useState(false);
+
+  // --- Multi-Tab Chat State & Operations ---
+  const [chatTabs, setChatTabs] = useState<ChatTab[]>(() => {
+    return [{
+      id: "0",
+      name: "New Chat",
+      messages: [],
+      sandboxFiles: [],
+      generatedImage: null,
+      chatMode: "director",
+      isCoderMode: false
+    }];
+  });
+  const [activeTabId, setActiveTabId] = useState<string>("0");
+  const isSwitchingTabRef = useRef(false);
+
+  // Auto-sync active states to active tab in tabs list
+  useEffect(() => {
+    if (isSwitchingTabRef.current) return;
+    setChatTabs(prev => {
+      const activeTabObj = prev.find(t => t.id === activeTabId);
+      if (!activeTabObj) return prev;
+      
+      if (
+        activeTabObj.messages === messages &&
+        activeTabObj.sandboxFiles === sandboxFiles &&
+        activeTabObj.generatedImage === generatedImage &&
+        activeTabObj.chatMode === chatMode &&
+        activeTabObj.isCoderMode === isCoderMode
+      ) {
+        return prev;
+      }
+      
+      return prev.map(t => {
+        if (t.id === activeTabId) {
+          return {
+            ...t,
+            messages,
+            sandboxFiles,
+            generatedImage,
+            chatMode,
+            isCoderMode
+          };
+        }
+        return t;
+      });
+    });
+  }, [messages, sandboxFiles, generatedImage, chatMode, isCoderMode, activeTabId]);
+
+  // Purge temporary on unload
+  useEffect(() => {
+    const handleUnload = () => {
+      chatTabs.forEach(t => {
+        if (t.isTemporary || t.id.startsWith("-")) {
+          const blob = new Blob([JSON.stringify({ reqId: t.id })], { type: 'application/json' });
+          navigator.sendBeacon("/api/purge-history", blob);
+        }
+      });
+    };
+    window.addEventListener("beforeunload", handleUnload);
+    return () => window.removeEventListener("beforeunload", handleUnload);
+  }, [chatTabs]);
+
+  const selectTab = useCallback((targetId: string) => {
+    if (targetId === activeTabId) return;
+    isSwitchingTabRef.current = true;
+
+    setChatTabs(prev => {
+      const updated = prev.map(t => {
+        if (t.id === activeTabId) {
+          return {
+            ...t,
+            messages,
+            sandboxFiles,
+            generatedImage,
+            chatMode,
+            isCoderMode
+          };
+        }
+        return t;
+      });
+
+      const targetTab = updated.find(t => t.id === targetId);
+      if (targetTab) {
+        setMessages(targetTab.messages || []);
+        setSandboxFiles(targetTab.sandboxFiles || []);
+        setGeneratedImage(targetTab.generatedImage || null);
+        setChatMode(targetTab.chatMode || "director");
+        setIsCoderMode(targetTab.isCoderMode || false);
+      }
+      return updated;
+    });
+
+    setActiveTabId(targetId);
+
+    setTimeout(() => {
+      isSwitchingTabRef.current = false;
+    }, 50);
+  }, [activeTabId, messages, sandboxFiles, generatedImage, chatMode, isCoderMode]);
+
+  const openNewTab = useCallback((isTemporary: boolean = false) => {
+    const prevActiveId = activeTabId;
+    let archivedId = "";
+
+    setChatTabs(prev => {
+      let updated = [...prev];
+
+      if (prevActiveId === "0") {
+        archivedId = (isTemporary ? "-" : "") + Date.now().toString() + "_" + Math.floor(Math.random() * 1000);
+        
+        updated = updated.map(t => {
+          if (t.id === "0") {
+            const dateStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return {
+              ...t,
+              id: archivedId,
+              name: t.name === "New Chat" ? `Chat #${dateStr}` : t.name,
+              messages,
+              sandboxFiles,
+              generatedImage,
+              chatMode,
+              isCoderMode,
+              isTemporary: t.isTemporary
+            };
+          }
+          return t;
+        });
+
+        // Backend archive history
+        fetch("/api/archive-history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ oldReqId: "0", newReqId: archivedId })
+        }).catch(err => console.warn("Failed to archive on backend", err));
+      }
+
+      const newTab: ChatTab = {
+        id: "0",
+        name: isTemporary ? "Temporary Chat" : "New Chat",
+        messages: [],
+        sandboxFiles: [],
+        generatedImage: null,
+        chatMode: "director",
+        isCoderMode: false,
+        isTemporary
+      };
+
+      updated.push(newTab);
+      return updated;
+    });
+
+    setMessages([]);
+    setSandboxFiles([]);
+    setGeneratedImage(null);
+    setChatMode("director");
+    setIsCoderMode(false);
+    setActiveTabId("0");
+  }, [activeTabId, messages, sandboxFiles, generatedImage, chatMode, isCoderMode]);
+
+  const closeTab = useCallback((id: string) => {
+    const isTemp = id.startsWith("-") || (chatTabs.find(t => t.id === id)?.isTemporary);
+    if (isTemp) {
+      fetch("/api/purge-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reqId: id })
+      }).catch(err => console.warn("Failed to purge temporary tab on backend", err));
+    }
+
+    setChatTabs(prev => {
+      const updated = prev.filter(t => t.id !== id);
+      if (id === activeTabId) {
+        const nextTab = updated[updated.length - 1] || {
+          id: "0",
+          name: "New Chat",
+          messages: [],
+          sandboxFiles: [],
+          generatedImage: null,
+          chatMode: "director",
+          isCoderMode: false
+        };
+        if (!updated.some(t => t.id === nextTab.id)) {
+          updated.push(nextTab);
+        }
+        
+        setMessages(nextTab.messages || []);
+        setSandboxFiles(nextTab.sandboxFiles || []);
+        setGeneratedImage(nextTab.generatedImage || null);
+        setChatMode(nextTab.chatMode || "director");
+        setIsCoderMode(nextTab.isCoderMode || false);
+        setActiveTabId(nextTab.id);
+      }
+      return updated;
+    });
+  }, [activeTabId, chatTabs]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -79,14 +464,6 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
   const spokenTextLengthRef = useRef(0);
   const isSpeakingRef = useRef(false);
 
-  // --- Helpers ---
-  const addLog = useCallback((message: string, type: "info" | "error" | "success" = "info") => {
-    setLogs((prev) => [
-      ...prev,
-      { timestamp: new Date().toLocaleTimeString(), message, type },
-    ].slice(-50));
-  }, []);
-
   // --- Hooks ---
   const { 
     systemRam, 
@@ -100,8 +477,16 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
   } = useSystemStats(addLog);
 
   useEffect(() => {
-    browserEngine.init();
-  }, []);
+    browserEngine.init().then(() => {
+      if (browserEngine.useLocalServerApi) {
+        addLog("Omnix System: Local Omnix Desktop API Server detected running on Port 9777! AI capabilities are routed through local high-performance hardware, bypassing browser WASM downloads.", "success");
+      } else {
+        addLog("Omnix System: Local Omnix Desktop API Server is offline or unreachable. Initializing local browser-side models (WebGPU/WASM mode).", "info");
+      }
+    }).catch(err => {
+      addLog(`Omnix System: Initialization warning/error: ${err?.message || String(err)}`, "error");
+    });
+  }, [addLog]);
 
   const {
     selectedModels,
@@ -289,7 +674,10 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setIsModelLoading,
     setLoadingProgress,
     thinkEnabled,
-    setError
+    setError,
+    activeTabId,
+    focusTopics,
+    enableFocusTopics
   );
 
   const {
@@ -336,11 +724,25 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    if (activeCategory !== targetCategory || !loadedModelId) {
+    let isMatched = activeCategory === targetCategory;
+    if (targetCategory === "director" && selectedModels.director === "use-text-model" && activeCategory === "text") {
+      isMatched = true;
+    }
+    if (targetCategory === "text" && selectedModels.director === "use-text-model" && activeCategory === "director") {
+      isMatched = true;
+    }
+
+    let expectedModelId = selectedModels[targetCategory];
+    if (targetCategory === "director" && expectedModelId === "use-text-model") {
+      expectedModelId = selectedModels.text;
+    }
+    const isModelMatched = loadedModelId === expectedModelId;
+
+    if (!isMatched || !isModelMatched) {
       addLog(`System: Mode switch to ${isCoderMode ? 'Coder' : chatMode} detected. Loading model for ${targetCategory}...`, "info");
       loadModel(targetCategory);
     }
-  }, [isRamDetected, isCoderMode, chatMode, activeCategory, loadedModelId, isModelLoading, loadModel, addLog, error]);
+  }, [isRamDetected, isCoderMode, chatMode, activeCategory, loadedModelId, isModelLoading, loadModel, addLog, error, selectedModels]);
 
   // Orchestrate model switching based on queues
   useInferenceOrchestrator(
@@ -389,7 +791,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     }
   );
 
-  const { isLiveMode, toggleLiveMode } = useLiveMode(
+  const { isLiveMode, toggleLiveMode, livePermissionError, setLivePermissionError } = useLiveMode(
     addLog,
     flushRecording,
     isRecording,
@@ -416,6 +818,21 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
 
   // Sync refs
   useEffect(() => { isLiveModeRef.current = isLiveMode; }, [isLiveMode]);
+
+  // Sync chatMode with isLiveMode (so if live mode fails/stops, we return to director mode)
+  useEffect(() => {
+    if (!isLiveMode && chatMode === "live") {
+      setChatMode("director");
+    }
+  }, [isLiveMode, chatMode, setChatMode]);
+
+  // Enable Kokoro TTS when Live Mode starts, but allow user to toggle it off manually
+  useEffect(() => {
+    if (isLiveMode) {
+      setSpeakEnabled(true);
+      tts.resume();
+    }
+  }, [isLiveMode, setSpeakEnabled]);
 
   const clearChat = useCallback(() => {
     setMessages([]);
@@ -478,7 +895,11 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     theme, setTheme,
     minimizeToTray, setMinimizeToTray,
     enableRelayMode, setEnableRelayMode,
+    enableFocusTopics, setEnableFocusTopics,
+    focusTopics, setFocusTopics,
+    emotionalState, setEmotionalState,
     thinkEnabled, setThinkEnabled,
+    chatTabs, activeTabId, selectTab, openNewTab, closeTab,
     relayActive, isApiServerActive, startRelayServer, launchApiServer, shutdownApiServer,
     isModelLoading, isModelReady, loadingProgress, loadedModelId,
     activeCategory, selectedModels, setSelectedModels,
@@ -494,12 +915,14 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     musicModelQueue, setMusicModelQueue,
     isCategoryDisabled, longTermMemories,
     systemRam, heapUsage, memoryUsage, hasWebGPU,
-    logs, showLogs, setShowLogs,
+    logs, addLog, showLogs, setShowLogs,
     isElectron, isCoderMode, setIsCoderMode,
     previousTextModel, setPreviousTextModel,
     isLiveMode, toggleLiveMode,
     safeMode, setSafeMode,
+    livePermissionError, setLivePermissionError,
     showSidebar, setShowSidebar,
+    showMemoryDashboard, setShowMemoryDashboard,
     isConnected,
     activeAuthRequest, respondToAuth,
     sandboxFiles, setSandboxFiles,

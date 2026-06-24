@@ -13,6 +13,7 @@ export function useLiveMode(
   captureIntervalMs: number
 ) {
   const [isLiveMode, setIsLiveMode] = useState(false);
+  const [livePermissionError, setLivePermissionError] = useState(false);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastScreenshotRef = useRef<string | null>(null);
@@ -94,7 +95,13 @@ export function useLiveMode(
 
   const startLiveMode = useCallback(async () => {
     try {
+      setLivePermissionError(false);
       addLog("Starting Live Mode... Requesting screen capture", "info");
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        throw new Error("Display Media API is not supported in this browser. Please ensure your browser supports screen sharing, or try opening the application in a new tab.");
+      }
+
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       screenStreamRef.current = stream;
 
@@ -124,7 +131,9 @@ export function useLiveMode(
         onFrame(screenshot, isSilent, audioData);
       }, captureIntervalMsRef.current);
     } catch (err: any) {
+      console.error("Failed to start Live Mode:", err);
       addLog("Failed to start Live Mode: " + err.message, "error");
+      setLivePermissionError(true);
       stopLiveMode();
     }
   }, [addLog, startRecording, stopLiveMode, captureScreenshot, flushRecording]);
@@ -149,6 +158,8 @@ export function useLiveMode(
   return {
     isLiveMode,
     toggleLiveMode,
-    lastScreenshotRef
+    lastScreenshotRef,
+    livePermissionError,
+    setLivePermissionError
   };
 }

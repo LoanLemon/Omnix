@@ -46,6 +46,8 @@ export function Sidebar({
     isCoderMode,
     enableRelayMode,
     setEnableRelayMode,
+    enableFocusTopics,
+    setEnableFocusTopics,
     thinkEnabled,
     setThinkEnabled,
     relayActive,
@@ -57,7 +59,10 @@ export function Sidebar({
     rebootEngine,
     currentStepIndex,
     isPipelineRunning,
-    workflow
+    workflow,
+    loadingProgress,
+    safeMode,
+    setSafeMode
   } = useApp();
 
   const filteredModels = MODELS;
@@ -237,15 +242,15 @@ export function Sidebar({
                       ) : <Download className="w-3.5 h-3.5" />}
                     </Button>
                   </div>
-                  {isModelLoading && isActive && Object.values(useApp().loadingProgress).length > 0 && (
+                  {isModelLoading && isActive && Object.values(loadingProgress).length > 0 && (
                     <div className="mt-2 space-y-1">
                       <Progress 
-                        value={Object.values(useApp().loadingProgress).reduce((acc, curr) => acc + (curr.progress || 0), 0) / Object.values(useApp().loadingProgress).length} 
+                        value={Object.values(loadingProgress).reduce((acc, curr) => acc + (curr.progress || 0), 0) / Object.values(loadingProgress).length} 
                         className="h-1 bg-black/40"
                       />
                       <div className="flex justify-between text-[7px] font-mono uppercase opacity-50">
                         <span>Loading_Assets_...</span>
-                        <span>{Math.round(Object.values(useApp().loadingProgress).reduce((acc, curr) => acc + (curr.progress || 0), 0) / Object.values(useApp().loadingProgress).length)}%</span>
+                        <span>{Math.round(Object.values(loadingProgress).reduce((acc, curr) => acc + (curr.progress || 0), 0) / Object.values(loadingProgress).length)}%</span>
                       </div>
                     </div>
                   )}
@@ -362,7 +367,7 @@ export function Sidebar({
               size="icon" 
               className="h-4 w-4 hover:text-red-500" 
               title="REBOOT_ENGINE_STACK"
-              onClick={useApp().rebootEngine}
+              onClick={rebootEngine}
             >
               <Zap className="w-2.5 h-2.5" />
             </Button>
@@ -423,8 +428,8 @@ export function Sidebar({
               <div className="space-y-2">
                 <span className="text-[8px] font-mono text-muted-foreground/50 uppercase">SAFE_ENGINE</span>
                 <Switch 
-                  checked={useApp().safeMode} 
-                  onCheckedChange={useApp().setSafeMode}
+                  checked={safeMode} 
+                  onCheckedChange={setSafeMode}
                   className="scale-75 data-[state=checked]:bg-orange-600 ml-[-4px]"
                 />
               </div>
@@ -441,6 +446,14 @@ export function Sidebar({
                 <Switch 
                   checked={thinkEnabled} 
                   onCheckedChange={setThinkEnabled}
+                  className="scale-75 data-[state=checked]:bg-orange-600 ml-[-4px]"
+                />
+              </div>
+              <div className="space-y-2">
+                <span className="text-[8px] font-mono text-muted-foreground/50 uppercase">FOCUS_TOPICS</span>
+                <Switch 
+                  checked={enableFocusTopics} 
+                  onCheckedChange={setEnableFocusTopics}
                   className="scale-75 data-[state=checked]:bg-orange-600 ml-[-4px]"
                 />
               </div>

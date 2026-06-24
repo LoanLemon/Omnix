@@ -110,6 +110,59 @@ async function checkShaderF16Support(): Promise<boolean> {
   return cachedShaderF16Support;
 }
 
+function compileChatTemplate(modelId: string, messages: any[]): string {
+  const modelIdLower = String(modelId || "").toLowerCase();
+  
+  if (modelIdLower.includes("qwen") || modelIdLower.includes("tiny-llm") || modelIdLower.includes("janus")) {
+    let chat = "";
+    messages.forEach((msg) => {
+      const role = msg.role === "model" ? "assistant" : msg.role;
+      chat += `<|im_start|>${role}\n${msg.content}<|im_end|>\n`;
+    });
+    chat += `<|im_start|>assistant\n`;
+    return chat;
+  }
+  
+  if (modelIdLower.includes("llama")) {
+    let chat = "<|begin_of_text|>";
+    messages.forEach((msg) => {
+      const role = msg.role === "model" ? "assistant" : msg.role;
+      chat += `<|start_header_id|>${role}<|end_header_id|>\n\n${msg.content}<|eot_id|>\n`;
+    });
+    chat += `<|start_header_id|>assistant<|end_header_id|>\n\n`;
+    return chat;
+  }
+  
+  if (modelIdLower.includes("gemma")) {
+    let chat = "<bos>";
+    let systemPrompt = "";
+    messages.forEach((msg) => {
+      if (msg.role === "system") {
+        systemPrompt = msg.content;
+      } else {
+        const role = (msg.role === "assistant" || msg.role === "model") ? "model" : "user";
+        let content = msg.content;
+        if (role === "user" && systemPrompt) {
+          content = `${systemPrompt}\n\n${content}`;
+          systemPrompt = "";
+        }
+        chat += `<start_of_turn>${role}\n${content}<end_of_turn>\n`;
+      }
+    });
+    chat += `<start_of_turn>model\n`;
+    return chat;
+  }
+  
+  // Generic ChatML fallback
+  let chat = "";
+  messages.forEach((msg) => {
+    const role = msg.role === "model" ? "assistant" : msg.role;
+    chat += `<|im_start|>${role}\n${msg.content}<|im_end|>\n`;
+  });
+  chat += `<|im_start|>assistant\n`;
+  return chat;
+}
+
 class WorkerModelEngine {
   private currentModelId: string | null = null;
   private pipeline: any = null;
@@ -177,6 +230,36 @@ class WorkerModelEngine {
       } else {
         console.warn("⚠️ Warning during safeDispose in worker:", err);
       }
+    }
+  }
+
+  private safeDisposeTensors(obj: any) {
+    if (!obj) return;
+    try {
+      if (typeof obj.dispose === "function") {
+        obj.dispose();
+        return;
+      }
+      if (Array.isArray(obj)) {
+        for (const item of obj) {
+          this.safeDisposeTensors(item);
+        }
+      } else if (typeof obj === "object") {
+        for (const key of Object.keys(obj)) {
+          const val = obj[key];
+          if (val && typeof val === "object") {
+            if (typeof val.dispose === "function") {
+              try {
+                val.dispose();
+              } catch (err) {}
+            } else {
+              this.safeDisposeTensors(val);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Quiet failure for manual garbage collection
     }
   }
 
@@ -667,6 +750,10 @@ class WorkerModelEngine {
         
         const sampling_rate = this.model.config.audio_encoder.sampling_rate;
         const wavUrl = await this.float32ArrayToWavUrl(audio_values.audio_values.data, sampling_rate);
+        
+        this.safeDisposeTensors(inputs);
+        this.safeDisposeTensors(audio_values);
+        
         return { audio: wavUrl, sampling_rate };
       }
 
@@ -702,19 +789,21 @@ class WorkerModelEngine {
               return { role: "system", content: m.content };
             } else if (m.role === "user") {
               const hasImg = !!m.image;
+              const textContent = m.timestamp ? `[${m.timestamp}] ${m.content}` : m.content;
               if (hasImg) {
                 return {
                   role: "user",
                   content: [
                     { type: "image" },
-                    { type: "text", text: m.content }
+                    { type: "text", text: textContent }
                   ]
                 };
               } else {
-                return { role: "user", content: m.content };
+                return { role: "user", content: textContent };
               }
             } else {
-              return { role: "assistant", content: m.content };
+              const textContent = m.timestamp ? `[${m.timestamp}] ${m.content}` : m.content;
+              return { role: "assistant", content: textContent };
             }
           });
         } else if (isMultimodal) {
@@ -769,10 +858,16 @@ class WorkerModelEngine {
           ...(topPVal !== undefined ? { top_p: topPVal } : {}),
         });
 
+        const sliceOutput = outputs.slice(null, [inputs.input_ids.dims.at(-1), null]);
         const decoded = this.processor.batch_decode(
-          outputs.slice(null, [inputs.input_ids.dims.at(-1), null]),
+          sliceOutput,
           { skip_special_tokens: true },
         );
+        
+        this.safeDisposeTensors(inputs);
+        this.safeDisposeTensors(outputs);
+        this.safeDisposeTensors(sliceOutput);
+        
         return decoded[0];
       }
 
@@ -784,6 +879,11 @@ class WorkerModelEngine {
           const outputs = await this.model.generate({ ...inputs, max_new_tokens: maxTokens });
           const new_tokens = outputs.slice(null, [inputs.input_ids.dims.at(-1), null]);
           const decoded = this.processor.batch_decode(new_tokens, { skip_special_tokens: true });
+          
+          this.safeDisposeTensors(inputs);
+          this.safeDisposeTensors(outputs);
+          this.safeDisposeTensors(new_tokens);
+          
           return decoded[0];
         }
 
@@ -818,10 +918,19 @@ class WorkerModelEngine {
           do_sample: false,
         });
 
+        const sliceOutput = outputs.slice(null, [inputs.input_ids.dims.at(-1), null]);
         const decoded = this.processor.batch_decode(
-          outputs.slice(null, [inputs.input_ids.dims.at(-1), null]),
+          sliceOutput,
           { skip_special_tokens: true },
         );
+        
+        this.safeDisposeTensors(inputs);
+        this.safeDisposeTensors(outputs);
+        this.safeDisposeTensors(sliceOutput);
+        if (image && typeof (image as any).dispose === 'function') {
+          try { (image as any).dispose(); } catch (e) {}
+        }
+        
         return decoded[0];
       }
 
@@ -860,6 +969,14 @@ class WorkerModelEngine {
           });
           const new_tokens = outputs.slice(null, [inputs.input_ids.dims.at(-1), null]);
           const decoded = this.processor.batch_decode(new_tokens, { skip_special_tokens: true });
+          
+          this.safeDisposeTensors(inputs);
+          this.safeDisposeTensors(outputs);
+          this.safeDisposeTensors(new_tokens);
+          if (rawImage && typeof (rawImage as any).dispose === 'function') {
+            try { (rawImage as any).dispose(); } catch (e) {}
+          }
+          
           return decoded[0];
           
         } else {
@@ -891,12 +1008,18 @@ class WorkerModelEngine {
           });
           
           const raw = outputs[0];
-          return {
+          const result = {
             __serialized_type__: "RawImage",
             width: raw.width,
             height: raw.height,
+            channels: raw.channels,
             data: Array.from(raw.data)
           };
+          
+          this.safeDisposeTensors(inputs);
+          this.safeDisposeTensors(outputs);
+          
+          return result;
         }
       }
 
@@ -948,23 +1071,27 @@ class WorkerModelEngine {
             messages.push({ role: "user", content: input });
           }
 
+          let isTemplatedOk = false;
           try {
             if (this.pipeline.tokenizer?.apply_chat_template) {
               const templated = this.pipeline.tokenizer.apply_chat_template(messages, {
                 tokenize: false,
                 add_generation_prompt: true
               });
-              if (templated && typeof templated === "string") {
+              if (templated && typeof templated === "string" && templated.trim().length > 0) {
                 formattedInput = templated;
                 promptString = templated;
-              } else {
-                formattedInput = messages;
+                isTemplatedOk = true;
               }
-            } else {
-              formattedInput = messages;
             }
           } catch (templateErr) {
-            formattedInput = messages;
+            console.warn("Worker: apply_chat_template failed, using robust fallback compileChatTemplate:", templateErr);
+          }
+
+          if (!isTemplatedOk) {
+            const compiled = compileChatTemplate(this.currentModelId || "", messages);
+            formattedInput = compiled;
+            promptString = compiled;
           }
         }
 
@@ -1030,12 +1157,16 @@ class WorkerModelEngine {
 
         const output = await this.pipeline(formattedInput, pipeOptions);
         if (output instanceof RawImage) {
-          return {
+          const result = {
             __serialized_type__: "RawImage",
             width: output.width,
             height: output.height,
+            channels: output.channels,
             data: Array.from(output.data)
           };
+          this.safeDisposeTensors(output);
+          this.safeDisposeTensors(formattedInput);
+          return result;
         }
         
         let responseText = "";
@@ -1098,6 +1229,8 @@ class WorkerModelEngine {
           responseText = typeof output === "string" ? output : JSON.stringify(output);
         }
 
+        this.safeDisposeTensors(output);
+        this.safeDisposeTensors(formattedInput);
         return responseText;
       }
       return null;

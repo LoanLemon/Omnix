@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 
 interface AuthPromptModalProps {
   activeAuthRequest: { authId: string; webdomain: string; category: string } | null;
-  respondToAuth: (authId: string, decision: "once" | "always" | "never") => void;
+  respondToAuth: (authId: string, decision: "once" | "always" | "never" | "block_once") => void;
 }
 
 export function AuthPromptModal({ activeAuthRequest, respondToAuth }: AuthPromptModalProps) {
@@ -15,7 +15,7 @@ export function AuthPromptModal({ activeAuthRequest, respondToAuth }: AuthPrompt
   const { authId, webdomain, category } = activeAuthRequest;
 
   return (
-    <Dialog open={true} onOpenChange={() => respondToAuth(authId, "never")}>
+    <Dialog open={true} onOpenChange={() => respondToAuth(authId, "block_once")}>
       <DialogContent className="max-w-md p-6 bg-[#0E0E0E] border border-orange-500/30 text-zinc-100 rounded-xl overflow-hidden shadow-[0_0_50px_rgba(249,115,22,0.15)] animate-in fade-in zoom-in duration-200">
         <DialogHeader className="space-y-3">
           <div className="flex items-center gap-3">
@@ -82,14 +82,24 @@ export function AuthPromptModal({ activeAuthRequest, respondToAuth }: AuthPrompt
               ALLOW ALWAYS
             </Button>
           </div>
-          <Button
-            variant="destructive"
-            onClick={() => respondToAuth(authId, "never")}
-            className="w-full bg-red-950/20 hover:bg-red-900/30 border border-red-900/40 text-red-400 hover:text-red-300 transition-all text-xs font-mono py-5 mt-1"
-          >
-            <Ban className="w-4 h-4 mr-1.5" />
-            NEVER ALLOW FROM DOMAIN
-          </Button>
+          <div className="grid grid-cols-2 gap-2 mt-1">
+            <Button
+              variant="destructive"
+              onClick={() => respondToAuth(authId, "block_once")}
+              className="bg-red-950/20 hover:bg-red-900/30 border border-red-900/40 text-red-400 hover:text-red-300 transition-all text-xs font-mono py-5"
+            >
+              <Ban className="w-4 h-4 mr-1.5" />
+              BLOCK ATTEMPT
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => respondToAuth(authId, "never")}
+              className="bg-red-950/40 hover:bg-red-900/55 border border-red-900/60 text-red-300 hover:text-red-200 transition-all text-xs font-mono py-5 font-bold"
+            >
+              <Ban className="w-4 h-4 mr-1.5" />
+              BLOCK ALL
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
