@@ -14,7 +14,7 @@ Janus-Pro is a unified, multimodal model developed by **DeepSeek**. It acts as a
 
 ## 2. In-Browser Model Initialization & WebGPU Optimization
 
-WebGPU provides high-speed, hardware-accelerated tensor computations directly in browser sandboxes. However, Janus-Pro's memory footprint requires unique scheduling. To prevent out-of-memory (OOM) crashes and maximize inference speeds, we apply an **asymmetric hybrid device mapping** inside our model worker (`src/gui/lib/model.worker.ts`):
+WebGPU provides high-speed, hardware-accelerated tensor computations directly in browser sandboxes. However, Janus-Pro's memory footprint requires unique scheduling. To prevent out-of-memory (OOM) crashes and maximize inference speeds, we apply an **asymmetric hybrid device mapping** inside our model worker (`src/gui/worker/main.worker.ts`):
 
 ```typescript
 const isJanus = info.id.toLowerCase().includes("janus");

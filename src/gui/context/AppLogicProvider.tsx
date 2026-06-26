@@ -21,13 +21,21 @@ import { usePipelineGeneration } from "@/hooks/usePipelineGeneration";
 import { AppProvider } from "./AppContext";
 
 // Types
-import { LogEntry, SandboxFile, ChatTab, FocusTopic, EmotionalState } from "@shared/types";
+import { LogEntry, SandboxFile, ChatTab, ChatMode, FocusTopic, EmotionalState, ErrorReport } from "@shared/types";
 
 export function AppLogicProvider({ children }: { children: ReactNode }) {
   // --- Settings & Persistence ---
   const {
     ramLimitPercent,
     setRamLimitPercent,
+    contextMemoryLimit,
+    setContextMemoryLimit,
+    temperature,
+    setTemperature,
+    topP,
+    setTopP,
+    topK,
+    setTopK,
     enableRAG,
     setEnableRAG,
     speakEnabled,
@@ -46,6 +54,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setEnableFocusTopics,
     thinkEnabled,
     setThinkEnabled,
+    enableMMRS,
+    setEnableMMRS,
   } = useSettings();
 
   // --- State ---
@@ -58,7 +68,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const [messages, setMessages] = useState<any[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ErrorReport | null>(null);
   const [didError, setDidError] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -354,7 +364,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     }, 50);
   }, [activeTabId, messages, sandboxFiles, generatedImage, chatMode, isCoderMode]);
 
-  const openNewTab = useCallback((isTemporary: boolean = false) => {
+  const openNewTab = useCallback((isTemporary: boolean = false, mode?: ChatMode) => {
     const prevActiveId = activeTabId;
     let archivedId = "";
 
@@ -370,7 +380,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
             return {
               ...t,
               id: archivedId,
-              name: t.name === "New Chat" ? `Chat #${dateStr}` : t.name,
+              name: t.name === "New Chat" || t.name === "Sandbox Session" ? (t.chatMode === "sandbox" ? `Sandbox #${dateStr}` : `Chat #${dateStr}`) : t.name,
               messages,
               sandboxFiles,
               generatedImage,
@@ -392,12 +402,12 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
 
       const newTab: ChatTab = {
         id: "0",
-        name: isTemporary ? "Temporary Chat" : "New Chat",
+        name: mode === "sandbox" ? "Sandbox Session" : (isTemporary ? "Temporary Chat" : "New Chat"),
         messages: [],
         sandboxFiles: [],
         generatedImage: null,
-        chatMode: "director",
-        isCoderMode: false,
+        chatMode: mode || "director",
+        isCoderMode: mode === "sandbox",
         isTemporary
       };
 
@@ -408,10 +418,21 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setMessages([]);
     setSandboxFiles([]);
     setGeneratedImage(null);
-    setChatMode("director");
-    setIsCoderMode(false);
+    setChatMode(mode || "director");
+    setIsCoderMode(mode === "sandbox");
     setActiveTabId("0");
   }, [activeTabId, messages, sandboxFiles, generatedImage, chatMode, isCoderMode]);
+
+  const renameTab = useCallback((id: string, newName: string) => {
+    setChatTabs(prev => {
+      const updated = [...prev];
+      const targetIdx = updated.findIndex(t => t.id === id);
+      if (targetIdx !== -1) {
+        updated[targetIdx] = { ...updated[targetIdx], name: newName };
+      }
+      return updated;
+    });
+  }, []);
 
   const closeTab = useCallback((id: string) => {
     const isTemp = id.startsWith("-") || (chatTabs.find(t => t.id === id)?.isTemporary);
@@ -459,7 +480,25 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
   const isRoutingRef = useRef(false);
   const isLiveModeRef = useRef(false);
   const speakEnabledRef = useRef(speakEnabled);
-  useEffect(() => { speakEnabledRef.current = speakEnabled; }, [speakEnabled]);
+  useEffect(() => {
+    speakEnabledRef.current = speakEnabled;
+    if (!speakEnabled) {
+      tts.stop();
+      speechQueueRef.current = [];
+      spokenTextLengthRef.current = 0;
+      setMessages((prev) => {
+        return prev.map((msg) => {
+          if (msg.role === "assistant" && msg.fullContent) {
+            return {
+              ...msg,
+              content: msg.fullContent
+            };
+          }
+          return msg;
+        });
+      });
+    }
+  }, [speakEnabled, setMessages]);
   const speechQueueRef = useRef<string[]>([]);
   const spokenTextLengthRef = useRef(0);
   const isSpeakingRef = useRef(false);
@@ -491,6 +530,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
   const {
     selectedModels,
     setSelectedModels,
+    selectedQtypes,
+    setSelectedQtypes,
     activeCategory,
     setActiveCategory,
     isModelLoading,
@@ -629,6 +670,16 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     enableRelayMode || isElectron
   );
 
+  const { processSpeechQueue, feedSpeechToken, flushSpeech } = useSpeechManagement(
+    speakEnabledRef,
+    spokenTextLengthRef,
+    speechQueueRef,
+    isSpeakingRef,
+    setMessages,
+    isHiddenRef,
+    speakEnabled
+  );
+
   const {
     input,
     setInput,
@@ -647,7 +698,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     longTermMemories,
     pendingImage,
     setPendingImage,
-    handleSend
+    handleSend,
+    handleSendInternal
   } = useChatLogic(
     messages,
     setMessages,
@@ -677,7 +729,16 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setError,
     activeTabId,
     focusTopics,
-    enableFocusTopics
+    enableFocusTopics,
+    selectedQtypes,
+    contextMemoryLimit,
+    temperature,
+    topP,
+    topK,
+    setSandboxFiles,
+    enableMMRS,
+    feedSpeechToken,
+    flushSpeech
   );
 
   const {
@@ -693,6 +754,11 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setError(null);
     setDidError(false);
   }, [chatMode, isCoderMode, setError]);
+
+  // Sync MMRS state with model engine
+  useEffect(() => {
+    browserEngine.setEnableMMRS(enableMMRS);
+  }, [enableMMRS]);
 
   // --- Mode Sync: Auto-load or switch model based on active chat/coder mode ---
   useEffect(() => {
@@ -758,7 +824,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
       image: imageModelQueue.length,
       music: musicModelQueue.length
     },
-    loadModel
+    loadModel,
+    enableMMRS
   );
 
   const { analyzeImage } = useAppHandlers(
@@ -770,14 +837,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setPendingImage
   );
 
-  const { processSpeechQueue } = useSpeechManagement(
-    speakEnabledRef,
-    spokenTextLengthRef,
-    speechQueueRef,
-    isSpeakingRef,
-    setMessages,
-    isHiddenRef
-  );
+  // Speech management is instantiated above
 
   const { isRecording, toggleRecording, flushRecording, startRecording, stopRecording } = useSpeechToText(
     addLog, 
@@ -888,6 +948,10 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
 
   const value = {
     ramLimitPercent, setRamLimitPercent,
+    contextMemoryLimit, setContextMemoryLimit,
+    temperature, setTemperature,
+    topP, setTopP,
+    topK, setTopK,
     enableRAG, setEnableRAG,
     speakEnabled, setSpeakEnabled,
     chatMode, setChatMode,
@@ -899,10 +963,12 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     focusTopics, setFocusTopics,
     emotionalState, setEmotionalState,
     thinkEnabled, setThinkEnabled,
-    chatTabs, activeTabId, selectTab, openNewTab, closeTab,
+    enableMMRS, setEnableMMRS,
+    chatTabs, activeTabId, selectTab, openNewTab, closeTab, renameTab,
     relayActive, isApiServerActive, startRelayServer, launchApiServer, shutdownApiServer,
     isModelLoading, isModelReady, loadingProgress, loadedModelId,
     activeCategory, selectedModels, setSelectedModels,
+    selectedQtypes, setSelectedQtypes,
     workerCount, setWorkerCount,
     messages, setMessages,
     isGenerating, setIsGenerating,
@@ -923,13 +989,14 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     livePermissionError, setLivePermissionError,
     showSidebar, setShowSidebar,
     showMemoryDashboard, setShowMemoryDashboard,
+    error, setError, didError, setDidError,
     isConnected,
     activeAuthRequest, respondToAuth,
     sandboxFiles, setSandboxFiles,
     activeTab, setActiveTab,
     generatedImage, setGeneratedImage,
     pendingImage, setPendingImage,
-    loadModel, analyzeImage, handleSend,
+    loadModel, analyzeImage, handleSend, handleSendInternal,
     clearChat, clearCache, rebootEngine,
     isRecording, toggleRecording,
     scrollRef, logEndRef,

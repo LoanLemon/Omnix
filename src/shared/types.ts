@@ -9,6 +9,13 @@ export interface FocusTopic {
 export type EmotionalState = "Focused" | "Curious" | "Creative" | "Analytical" | "Excited" | "Thoughtful";
 
 
+export interface ErrorReport {
+  message: string;
+  activeModel?: string;
+  contextLength?: number;
+  rawPrompt?: string;
+}
+
 export interface SandboxFile {
   name: string;
   content: string;
@@ -19,6 +26,9 @@ export interface Message {
   id?: string;
   role: "user" | "assistant" | "system";
   content: string;
+  spokenContent?: string;
+  completedSpokenContent?: string;
+  fullContent?: string;
   image?: string;
   audio?: string;
   hidden?: boolean;

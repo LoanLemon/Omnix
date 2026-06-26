@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { MODELS } from "@shared/modelList";
+import { MODELS, getRequiredRamForModel, getBestFittingQtype } from "@shared/modelList";
 import { tts as ttsEngine } from "@/lib/tts";
 import type { RefObject } from "react";
 import { useApp } from "@/context/AppContext";
@@ -30,6 +30,12 @@ export function Sidebar({
     memoryUsage,
     ramLimitPercent,
     setRamLimitPercent,
+    temperature,
+    setTemperature,
+    topP,
+    setTopP,
+    topK,
+    setTopK,
     enableRAG,
     setEnableRAG,
     speakEnabled,
@@ -62,7 +68,11 @@ export function Sidebar({
     workflow,
     loadingProgress,
     safeMode,
-    setSafeMode
+    setSafeMode,
+    enableMMRS,
+    setEnableMMRS,
+    selectedQtypes,
+    setSelectedQtypes
   } = useApp();
 
   const filteredModels = MODELS;
@@ -203,7 +213,19 @@ export function Sidebar({
                     {showDropdown ? (
                       <Select 
                         value={selectedModels[cat]} 
-                        onValueChange={(val) => setSelectedModels((prev: any) => ({ ...prev, [cat]: val }))}
+                        onValueChange={(val) => {
+                          if (!val) return;
+                          const modelVal = val as string;
+                          setSelectedModels((prev: any) => ({ ...prev, [cat]: modelVal }));
+                          const chosenModel = modelsInCategory.find(m => m.id === modelVal);
+                          if (chosenModel) {
+                            const currentQtype = (selectedQtypes as Record<string, string>)[modelVal] || chosenModel.dtype || "q4";
+                            if (getRequiredRamForModel(chosenModel, currentQtype) > systemRam) {
+                              const bestQ = getBestFittingQtype(chosenModel, systemRam);
+                              setSelectedQtypes((prevQ: any) => ({ ...prevQ, [modelVal]: bestQ }));
+                            }
+                          }
+                        }}
                         disabled={isModelLoading}
                       >
                         <SelectTrigger className="h-7 flex-1 bg-muted/40 dark:bg-black/20 border-border/50 text-[10px] text-foreground font-mono rounded-none group hover:border-orange-500/20">
@@ -213,11 +235,24 @@ export function Sidebar({
                           {Array.from(new Set(modelsInCategory.map(m => m.make))).map(make => (
                             <SelectGroup key={make}>
                               <SelectLabel className="text-[9px] text-muted-foreground/50 uppercase px-2 py-1 font-bold">{make}</SelectLabel>
-                              {modelsInCategory.filter(m => m.make === make).map(m => (
-                                <SelectItem key={m.id} value={m.id} className="text-[10px] focus:bg-orange-500/10 focus:text-orange-500" disabled={!!(m.minRam && m.minRam > systemRam)}>
-                                  {m.name}
-                                </SelectItem>
-                              ))}
+                              {modelsInCategory.filter(m => m.make === make).map(m => {
+                                const fitsAtLeastOneQtype = (m.qtypes || [m.dtype || "q4"]).some(q => getRequiredRamForModel(m, q) <= systemRam);
+                                return (
+                                  <SelectItem 
+                                    key={m.id} 
+                                    value={m.id} 
+                                    className="text-[10px] focus:bg-orange-500/10 focus:text-orange-500" 
+                                    disabled={!fitsAtLeastOneQtype}
+                                  >
+                                    <span>{m.name}</span>
+                                    {!fitsAtLeastOneQtype && (
+                                      <span className="text-[8px] text-muted-foreground/50 ml-1.5 font-bold">
+                                        (Requires &gt;={Math.ceil(Math.min(...(m.qtypes || [m.dtype || "q4"]).map(q => getRequiredRamForModel(m, q))))}GB RAM)
+                                      </span>
+                                    )}
+                                  </SelectItem>
+                                );
+                              })}
                             </SelectGroup>
                           ))}
                         </SelectContent>
@@ -242,6 +277,50 @@ export function Sidebar({
                       ) : <Download className="w-3.5 h-3.5" />}
                     </Button>
                   </div>
+                  {(() => {
+                    const selectedModelId = selectedModels[cat];
+                    const selectedModelInfo = showDropdown ? filteredModels.find(m => m.id === selectedModelId) : modelsInCategory[0];
+                    if (selectedModelInfo?.qtypes && selectedModelInfo.qtypes.length > 1) {
+                      return (
+                        <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/10 pt-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                          <span className="text-[8px] font-mono font-bold text-muted-foreground/60 uppercase">QTYPE:</span>
+                          <Select
+                            value={selectedQtypes[selectedModelInfo.id] || selectedModelInfo.dtype || "q4"}
+                            onValueChange={(val) => {
+                              setSelectedQtypes((prev) => {
+                                const copy = { ...prev };
+                                copy[selectedModelInfo.id] = val as string;
+                                return copy;
+                              });
+                            }}
+                            disabled={isModelLoading}
+                          >
+                            <SelectTrigger className="h-6 w-24 bg-muted/40 dark:bg-black/10 border-border/40 text-[9px] text-foreground font-mono rounded-none">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-popover border border-border/50 text-popover-foreground text-[9px] font-mono shadow-md">
+                              {selectedModelInfo.qtypes.map((q) => {
+                                const reqRam = getRequiredRamForModel(selectedModelInfo, q);
+                                const isOverRam = reqRam > systemRam;
+                                return (
+                                  <SelectItem 
+                                    key={q} 
+                                    value={q} 
+                                    className="text-[9px] focus:bg-orange-500/10 focus:text-orange-500"
+                                    disabled={isOverRam}
+                                  >
+                                    <span>{q === "q4f16" ? "Q4 (FP16)" : q === "q4" ? "Q4 (FP32)" : q.toUpperCase()}</span>
+                                    {isOverRam && <span className="text-[7.5px] text-muted-foreground/60 ml-1 font-bold">(Requires ~{Math.ceil(reqRam)}GB)</span>}
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                   {isModelLoading && isActive && Object.values(loadingProgress).length > 0 && (
                     <div className="mt-2 space-y-1">
                       <Progress 
@@ -404,6 +483,51 @@ export function Sidebar({
                 className="py-1"
               />
             </div>
+
+            <div className="space-y-3 relative border-t border-border/30 pt-4">
+              <div className="flex justify-between text-[9px] font-mono uppercase text-muted-foreground/70 tracking-tighter">
+                <span>TEMPERATURE</span>
+                <span className="text-orange-500 font-bold tracking-normal">{temperature.toFixed(2)}</span>
+              </div>
+              <Slider 
+                value={[temperature]} 
+                onValueChange={(val) => setTemperature(val[0])} 
+                max={2.0} 
+                min={0.0} 
+                step={0.05}
+                className="py-1"
+              />
+            </div>
+            
+            <div className="space-y-3 relative pt-1">
+              <div className="flex justify-between text-[9px] font-mono uppercase text-muted-foreground/70 tracking-tighter">
+                <span>TOP_P</span>
+                <span className="text-orange-500 font-bold tracking-normal">{topP.toFixed(2)}</span>
+              </div>
+              <Slider 
+                value={[topP]} 
+                onValueChange={(val) => setTopP(val[0])} 
+                max={1.0} 
+                min={0.0} 
+                step={0.05}
+                className="py-1"
+              />
+            </div>
+
+            <div className="space-y-3 relative pt-1">
+              <div className="flex justify-between text-[9px] font-mono uppercase text-muted-foreground/70 tracking-tighter">
+                <span>TOP_K</span>
+                <span className="text-orange-500 font-bold tracking-normal">{topK}</span>
+              </div>
+              <Slider 
+                value={[topK]} 
+                onValueChange={(val) => setTopK(val[0])} 
+                max={100} 
+                min={1} 
+                step={1}
+                className="py-1"
+              />
+            </div>
             
             <div className="grid grid-cols-2 gap-3 relative border-t border-border/30 pt-4">
               <div className="space-y-2">
@@ -430,6 +554,14 @@ export function Sidebar({
                 <Switch 
                   checked={safeMode} 
                   onCheckedChange={setSafeMode}
+                  className="scale-75 data-[state=checked]:bg-orange-600 ml-[-4px]"
+                />
+              </div>
+              <div className="space-y-2">
+                <span className="text-[8px] font-mono text-muted-foreground/50 uppercase font-bold text-orange-400">MULTI_MODEL_MMRS</span>
+                <Switch 
+                  checked={enableMMRS} 
+                  onCheckedChange={setEnableMMRS}
                   className="scale-75 data-[state=checked]:bg-orange-600 ml-[-4px]"
                 />
               </div>

@@ -297,12 +297,15 @@ async function startServer() {
   // Text-to-Speech
   app.post("/api/tts", async (req, res) => {
     try {
-      const { text, modelId } = req.body;
+      const { text, voiceID, voiceId, modelId } = req.body;
       if (!text) return res.status(400).json({ error: "Text is required" });
 
       const origin = req.headers.origin || req.headers.referer || "unknown";
       const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
-      const output = await dispatchTask("tts", text, { modelId, origin, reqId });
+      
+      const selectedVoice = voiceID || voiceId || modelId || "af_heart";
+
+      const output = await dispatchTask("tts", text, { voiceID: selectedVoice, origin, reqId });
       res.json(output);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

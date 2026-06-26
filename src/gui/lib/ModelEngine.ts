@@ -1,6 +1,7 @@
 import { RawImage } from "@huggingface/transformers";
-import { MODELS } from "@shared/modelList";
+import { MODELS, normalizeAndRegisterModel } from "@shared/modelList";
 import { float32ArrayToWav } from "./audioUtils";
+import { tts } from "./tts";
 
 // Globally override and silence the CORS content-length headers warning on main thread
 const originalWarn = console.warn;
@@ -37,17 +38,20 @@ function sanitizePayload(obj: any): any {
 }
 
 export class BrowserModelEngine {
-  private worker: Worker | null = null;
+  private workers: Map<string, Worker | null> = new Map();
+  private enableMMRS: boolean = false;
   private pendingRequests: Map<string, {
     resolve: (val: any) => void;
     reject: (err: any) => void;
     progress_callback?: (p: any) => void;
     onToken?: (token: string) => void;
+    workerKey?: string;
   }> = new Map();
 
   // Keep track of lightweight load states locally for synchronous UI stats queries
   public useLocalServerApi = false;
   private currentModelId: string | null = null;
+  private currentOpModelId: string | null = null;
   private hasDirector: boolean = false;
   private hasStt: boolean = false;
   private hasTts: boolean = false;
@@ -61,7 +65,7 @@ export class BrowserModelEngine {
   private onIdleUnloadCallback: (() => void) | null = null;
 
   constructor() {
-    this.initWorker();
+    this.initWorker("main");
   }
 
   getCurrentModelId(): string | null {
@@ -94,7 +98,7 @@ export class BrowserModelEngine {
     this.stopIdleTimer();
     
     // Only start idle timer if there are no pending requests and at least one model is active
-    if (this.pendingRequests.size === 0 && (this.currentModelId || this.hasDirector || this.hasStt || this.hasTts || this.hasEmbedding)) {
+    if (this.pendingRequests.size === 0 && (this.currentModelId || this.currentOpModelId || this.hasDirector || this.hasStt || this.hasTts || this.hasEmbedding)) {
       console.log("⏱️ Starting 10-minute idle unload timer...");
       this.idleTimeoutId = setTimeout(async () => {
         console.log("💤 App idle for 10 minutes. Unloading active models to free up GPU/RAM memory...");
@@ -110,17 +114,87 @@ export class BrowserModelEngine {
     }
   }
 
-  private initWorker() {
-    if (this.worker) return;
+  setEnableMMRS(val: boolean) {
+    if (this.enableMMRS === val) return;
+    this.enableMMRS = val;
+    this.terminateAllWorkers();
+    
+    if (val) {
+      this.initWorker("text");
+      this.initWorker("op");
+    } else {
+      this.initWorker("main");
+    }
+    this.notify();
+  }
+
+  terminateAllWorkers() {
+    for (const [key, w] of Array.from(this.workers.entries())) {
+      if (w) w.terminate();
+    }
+    this.workers.clear();
+    
+    this.currentModelId = null;
+    this.currentOpModelId = null;
+    this.hasDirector = false;
+    this.hasStt = false;
+    this.hasTts = false;
+    this.hasEmbedding = false;
+    
+    for (const [id, req] of Array.from(this.pendingRequests.entries())) {
+      req.reject(new Error("Engine workers reset due to configuration change."));
+      this.pendingRequests.delete(id);
+    }
+  }
+
+  private getWorkerKeyForCategory(category: string): string {
+    if (!this.enableMMRS) {
+      return "main";
+    }
+    return category === "text" ? "text" : "op";
+  }
+
+  private initWorker(key: string) {
+    if (this.workers.get(key)) return;
     try {
       // Native Vite chunk worker syntax
-      this.worker = new Worker(
-        new URL('./model.worker.ts', import.meta.url),
+      const worker = new Worker(
+        new URL('../worker/main.worker.ts', import.meta.url),
         { type: 'module' }
       );
 
-      this.worker.addEventListener("message", (e) => {
+      worker.addEventListener("error", (e) => {
+        const errorMsg = e.message || String(e);
+        console.error(`Worker [${key}] generic error:`, errorMsg);
+        if (
+          errorMsg.includes("A valid external Instance reference no longer exists") || 
+          errorMsg.includes("failed to call OrtRun") || 
+          errorMsg.includes("GPUBuffer") || 
+          errorMsg.includes("mapAsync") || 
+          errorMsg.includes("device lost")
+        ) {
+          console.error(`🚨 Fatal WebGPU error caught at worker [${key}] level. Restarting worker...`);
+          this.restartWorker(key);
+        }
+      });
+
+      worker.addEventListener("message", (e) => {
         const { type, requestId, result, error, progress, token } = e.data;
+        
+        if (type === "error" && requestId === "global") {
+          if (error && typeof error === "string" && (
+            error.includes("A valid external Instance reference no longer exists") || 
+            error.includes("failed to call OrtRun") || 
+            error.includes("GPUBuffer") || 
+            error.includes("mapAsync") || 
+            error.includes("device lost")
+          )) {
+            console.error(`🚨 Fatal WebGPU error detected globally on worker [${key}]. Restarting worker...`);
+            this.restartWorker(key);
+          }
+          return;
+        }
+
         const pending = this.pendingRequests.get(requestId);
         if (!pending) return;
 
@@ -145,18 +219,88 @@ export class BrowserModelEngine {
           }
         } else if (type === "error") {
           this.pendingRequests.delete(requestId);
+          
+          if (error && typeof error === "string" && (
+            error.includes("A valid external Instance reference no longer exists") || 
+            error.includes("failed to call OrtRun") || 
+            error.includes("GPUBuffer") || 
+            error.includes("mapAsync") || 
+            error.includes("device lost")
+          )) {
+            console.error(`🚨 Fatal WebGPU error detected on worker [${key}]. Terminating and restarting to recover...`);
+            this.restartWorker(key);
+          }
+
           pending.reject(new Error(error));
         }
       });
+
+      this.workers.set(key, worker);
     } catch (err) {
-      console.error("Critical: Failed to initialize Web Worker inside ModelEngine:", err);
+      console.error(`Critical: Failed to initialize Web Worker [${key}] inside ModelEngine:`, err);
     }
   }
 
-  private postToWorker(type: string, payload?: any, progress_callback?: (p: any) => void, onToken?: (token: string) => void): Promise<any> {
-    this.initWorker();
-    if (!this.worker) {
-      return Promise.reject(new Error("Worker not initialized"));
+  restartWorker(key: string) {
+    const w = this.workers.get(key);
+    if (w) {
+      w.terminate();
+      this.workers.set(key, null);
+    }
+    
+    // Clear all model states so the UI knows they are unloaded
+    if (!this.enableMMRS) {
+      this.currentModelId = null;
+      this.hasDirector = false;
+      this.hasStt = false;
+      this.hasTts = false;
+      this.hasEmbedding = false;
+    } else {
+      if (key === "text") {
+        if (this.currentModelId && this.currentModelId.startsWith("text:")) {
+          this.currentModelId = null;
+        }
+      } else {
+        if (this.currentOpModelId) {
+          this.currentOpModelId = null;
+        }
+        this.hasDirector = false;
+        this.hasStt = false;
+        this.hasTts = false;
+        this.hasEmbedding = false;
+      }
+    }
+    
+    // Reject any other pending requests for this specific worker
+    for (const [id, req] of Array.from(this.pendingRequests.entries())) {
+      if ((req as any).workerKey === key) {
+        req.reject(new Error(`Worker [${key}] was restarted. Please try your request again.`));
+        this.pendingRequests.delete(id);
+      }
+    }
+    
+    this.initWorker(key);
+    if (this.isLowMemory) {
+      this.postToWorker("setSafeMode", { val: this.isLowMemory }, undefined, undefined, key)
+        .catch(e => console.error(`Failed to restore safe mode on restart of worker [${key}]`, e));
+    }
+    this.notify();
+  }
+
+  private postToWorker(
+    type: string, 
+    payload?: any, 
+    progress_callback?: (p: any) => void, 
+    onToken?: (token: string) => void,
+    targetWorkerKey?: string
+  ): Promise<any> {
+    const category = payload?.category || "";
+    const workerKey = targetWorkerKey || this.getWorkerKeyForCategory(category);
+
+    this.initWorker(workerKey);
+    const worker = this.workers.get(workerKey);
+    if (!worker) {
+      return Promise.reject(new Error(`Worker [${workerKey}] not initialized`));
     }
 
     this.stopIdleTimer();
@@ -164,19 +308,20 @@ export class BrowserModelEngine {
     const requestId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : (Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15));
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(requestId, {
-        resolve: (val) => {
+        resolve: (val: any) => {
           resolve(val);
           this.restartIdleTimer();
         },
-        reject: (err) => {
+        reject: (err: any) => {
           reject(err);
           this.restartIdleTimer();
         },
         progress_callback,
-        onToken
-      });
+        onToken,
+        workerKey
+      } as any);
       const cleanPayload = sanitizePayload(payload);
-      this.worker!.postMessage({
+      worker.postMessage({
         type,
         requestId,
         payload: cleanPayload
@@ -217,12 +362,18 @@ export class BrowserModelEngine {
     });
   }
 
-  async loadModel(category: string, modelId: string, progressCallback?: (p: any) => void) {
+  async loadModel(category: string, modelId: string, progressCallback?: (p: any) => void, customDtype?: string) {
     const modelKey = `${category}:${modelId}`;
     if (category === "stt") {
       this.hasStt = true;
     } else if (category === "tts") {
       this.hasTts = true;
+    } else if (this.enableMMRS) {
+      if (category === "text") {
+        this.currentModelId = modelKey;
+      } else {
+        this.currentOpModelId = modelKey;
+      }
     } else {
       this.currentModelId = modelKey;
     }
@@ -239,7 +390,7 @@ export class BrowserModelEngine {
       return { success: true, mode: "api" };
     }
 
-    const res = await this.postToWorker("loadModel", { category, modelId }, progressCallback);
+    const res = await this.postToWorker("loadModel", { category, modelId, customDtype }, progressCallback);
     this.notify();
     return res;
   }
@@ -257,6 +408,7 @@ export class BrowserModelEngine {
 
   async clear() {
     this.currentModelId = null;
+    this.currentOpModelId = null;
     this.hasDirector = false;
     this.hasStt = false;
     this.hasTts = false;
@@ -272,8 +424,10 @@ export class BrowserModelEngine {
 
   getEstimatedLoadedWeightsBytes(): number {
     let sizeMB = 0;
-    if (this.currentModelId) {
-      const parts = this.currentModelId.split(":");
+    const modelIdsToCount = [this.currentModelId, this.currentOpModelId].filter(Boolean) as string[];
+    
+    for (const modelKey of modelIdsToCount) {
+      const parts = modelKey.split(":");
       const modelId = parts[1] || parts[0];
       const info = MODELS.find(m => m.id === modelId || m.modelID === modelId);
       if (info?.size) {
@@ -298,7 +452,7 @@ export class BrowserModelEngine {
     return sizeMB * 1024 * 1024;
   }
 
-  async runDirectorInference(input: string, modelId?: string, progressCallback?: (p: any) => void) {
+  async runDirectorInference(input: string, modelId?: string, progressCallback?: (p: any) => void, customDtype?: string) {
     this.hasDirector = true;
     if (this.useLocalServerApi) {
       this.notify();
@@ -306,7 +460,7 @@ export class BrowserModelEngine {
         const response = await fetch("http://localhost:9777/api/director", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: input, modelId })
+          body: JSON.stringify({ prompt: input, modelId, customDtype })
         });
         const data = await response.json();
         if (data.error) throw new Error(data.error);
@@ -316,7 +470,7 @@ export class BrowserModelEngine {
         throw err;
       }
     }
-    return this.postToWorker("runDirectorInference", { input, modelId }, progressCallback);
+    return this.postToWorker("runDirectorInference", { input, modelId, customDtype }, progressCallback);
   }
 
   async getEmbedding(text: string, progressCallback?: (p: any) => void): Promise<number[]> {
@@ -325,6 +479,21 @@ export class BrowserModelEngine {
   }
 
   async runInference(category: string, input: any, options: any = {}, onToken?: (token: string) => void) {
+    if (category === "tts") {
+      const voiceID = options.voiceID || options.voiceId || options.modelId || "af_heart";
+      try {
+        console.log(`🎙️ Running main-thread Kokoro TTS via kokoro-js for voice: ${voiceID}`);
+        const raw = await tts.generateRaw(input, voiceID);
+        return {
+          audio: Array.from(raw.audio),
+          sampling_rate: raw.sampling_rate
+        };
+      } catch (err: any) {
+        console.error("Main-thread Kokoro TTS failed:", err);
+        throw err;
+      }
+    }
+
     let modelId = options.modelId;
     if (!modelId && this.currentModelId) {
       const [curCategory, curModelId] = this.currentModelId.split(":");
@@ -334,6 +503,12 @@ export class BrowserModelEngine {
     }
     if (!modelId) {
       modelId = this.getDefaultModel(category);
+    }
+
+    if (modelId) {
+      const resolved = normalizeAndRegisterModel(modelId, category as any);
+      modelId = resolved.id;
+      options.modelId = resolved.id;
     }
     
     // Warm memory tracking states before calling worker
@@ -422,7 +597,7 @@ export class BrowserModelEngine {
         url = "http://localhost:9777/api/tts";
         body = {
           text: input,
-          modelId: modelId || "kokoro-82m"
+          voiceID: (modelId && modelId !== "kokoro-82m") ? modelId : "af_heart"
         };
       } else if (category === "image-gen") {
         url = "http://localhost:9777/api/image";

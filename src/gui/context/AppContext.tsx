@@ -1,17 +1,26 @@
 import React, { createContext, useContext, ReactNode } from "react";
-import { LogEntry, Message, ChatMode, SandboxFile, ChatTab, FocusTopic, EmotionalState } from "@shared/types";
+import { LogEntry, Message, ChatMode, SandboxFile, ChatTab, FocusTopic, EmotionalState, ErrorReport } from "@shared/types";
 
 interface AppContextType {
   // Tabs State
   chatTabs: ChatTab[];
   activeTabId: string;
   selectTab: (id: string) => void;
-  openNewTab: (isTemporary?: boolean) => void;
+  openNewTab: (isTemporary?: boolean, mode?: ChatMode) => void;
   closeTab: (id: string) => void;
+  renameTab: (id: string, newName: string) => void;
 
   // Settings
   ramLimitPercent: number;
   setRamLimitPercent: (val: number) => void;
+  contextMemoryLimit: number;
+  setContextMemoryLimit: (val: number) => void;
+  temperature: number;
+  setTemperature: (val: number) => void;
+  topP: number;
+  setTopP: (val: number) => void;
+  topK: number;
+  setTopK: (val: number) => void;
   enableRAG: boolean;
   setEnableRAG: (val: boolean) => void;
   enableFocusTopics: boolean;
@@ -34,6 +43,8 @@ interface AppContextType {
   setEnableRelayMode: (val: boolean) => void;
   thinkEnabled: boolean;
   setThinkEnabled: (val: boolean) => void;
+  enableMMRS: boolean;
+  setEnableMMRS: (val: boolean) => void;
   relayActive: boolean;
   isApiServerActive: boolean;
   startRelayServer: () => Promise<void>;
@@ -48,6 +59,8 @@ interface AppContextType {
   activeCategory: string;
   selectedModels: Record<string, string>;
   setSelectedModels: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  selectedQtypes: Record<string, string>;
+  setSelectedQtypes: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 
   // Chat State
   messages: Message[];
@@ -97,8 +110,8 @@ interface AppContextType {
   setShowMemoryDashboard: (val: boolean) => void;
 
   // Error State
-  error: string | null;
-  setError: (val: string | null) => void;
+  error: ErrorReport | null;
+  setError: (val: ErrorReport | null) => void;
   setDidError: (val: boolean) => void;
 
   // Connection
@@ -122,6 +135,7 @@ interface AppContextType {
   loadModel: (category: string, modelId?: string, skipLoadingVisuals?: boolean) => Promise<void>;
   analyzeImage: (file: File) => void;
   handleSend: () => void;
+  handleSendInternal: (text: string, systemPrompt?: string, role?: "user" | "system", hidden?: boolean) => Promise<void>;
   clearChat: () => void;
   clearCache: () => void;
   rebootEngine: () => void;

@@ -5,6 +5,7 @@ Omnix is a local multi-modal AI studio that allows you to orchestrate vision, sp
 ## Features
 
 - **Multi-Modal**: Support for Text, Vision, STT, TTS, Image Generation, and Music Generation.
+- **Multi-Model Routing & Scheduling (MMRS)**: Advanced dual-Web-Worker engine allowing concurrent text generation and auxiliary operations (STT, TTS, Image Gen, Music Gen) simultaneously.
 - **Local First**: All models run locally using WebGPU or WASM.
 - **Theme Support**: Polished Light and Dark modes.
 - **Live Mode**: Real-time screen and voice analysis.
@@ -12,49 +13,169 @@ Omnix is a local multi-modal AI studio that allows you to orchestrate vision, sp
 
 ---
 
+## Multi-Model Routing & Scheduling (MMRS)
+
+Omnix includes an advanced **Multi-Model Routing & Scheduling (MMRS)** engine designed to prevent single-thread execution bottlenecks.
+
+### Dual Web-Worker Architecture
+- **Text Worker (`text`)**: Processes standard conversational chat, code generation, and complex text completions.
+- **Operations Worker (`op`)**: Handles background auxiliary pipelines, such as:
+  - Speech-to-Text (STT) via Whisper
+  - Text-to-Speech (TTS) via Kokoro
+  - Image Generation via Janus-Pro
+  - Music Generation
+
+### Key Benefits
+- **Zero-Block Multitasking**: Users can trigger voice synthesis (TTS) or generate images while continuing to chat and generate text uninterrupted.
+- **Independent Context Isolation**: Prevents heavy model switches from blocking the text reasoning pipeline.
+- **Dynamic Resource Toggle**: Can be enabled or disabled instantly using the **MULTI_MODEL_MMRS** control switch in the GUI sidebar.
+
+---
+
 ## Local API Guide
 
-Omnix provides a local API running on `http://localhost:7770/api`.
+Omnix provides a local API running on `http://localhost:9777/api`.
 
 ### Endpoints
 
 #### 1. Text Generation (`POST /api/text`)
-- **Body**: `{"prompt": "string", "systemPrompt": "string", "modelId": "string"}`
-- **Response**: `{"response": "string"}`
+- **Body**:
+  ```json
+  {
+    "prompt": "string (Required)",
+    "systemPrompt": "string (Optional)",
+    "modelId": "string (Optional)",
+    "reqId": "string (Optional)",
+    "temperature": "number (Optional)",
+    "top_p": "number (Optional)",
+    "maxTokens": "number (Optional)"
+  }
+  ```
+  - **modelId**: Targets a specific loaded text model (e.g., `gemma-2-2b-instruct`). If absent, reuse current or default model.
+  - **reqId**: Unique tracking key for task correlation, isolated conversation history logs, and streaming updates. Can also be supplied via URL query parameter `?reqId=...` or headers `x-req-id` / `reqid`.
+- **Response**:
+  ```json
+  {
+    "response": "string",
+    "think": "string (Optional - populated if the model output contains a <think> block)"
+  }
+  ```
 
 #### 2. Vision Analysis (`POST /api/vision`)
 - **Body**: `multipart/form-data`
-  - `image`: File (Binary)
+  - `image`: File (Binary - Required)
   - `prompt`: string (Optional)
-  - `modelId`: string
-- **Response**: `{"response": "string"}`
+  - `modelId`: string (Optional)
+  - `reqId`: string (Optional - can also be passed via URL query or headers)
+- **Response**:
+  ```json
+  {
+    "response": "string",
+    "think": "string (Optional)"
+  }
+  ```
 
 #### 3. Director Routing (`POST /api/director`)
-- **Body**: `{"prompt": "string"}`
-- **Response**: `{"intent": "string", "prompt": "string"}`
+- **Body**:
+  ```json
+  {
+    "prompt": "string (Required)",
+    "reqId": "string (Optional)"
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "intent": "string",
+    "prompt": "string"
+  }
+  ```
 
 #### 4. Image Generation (`POST /api/image`)
-- **Body**: `{"prompt": "string"}`
-- **Response**: `{"status": "success", "image": "data:image/png;base64,..."}`
+- **Body**:
+  ```json
+  {
+    "prompt": "string (Required)",
+    "modelId": "string (Optional)",
+    "reqId": "string (Optional)"
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "status": "success",
+    "image": "data:image/png;base64,..."
+  }
+  ```
 
 #### 5. Music Generation (`POST /api/music`)
-- **Body**: `{"prompt": "string"}`
-- **Response**: `{"status": "success", "audio": [...], "sampling_rate": number}`
+- **Body**:
+  ```json
+  {
+    "prompt": "string (Required)",
+    "modelId": "string (Optional)",
+    "reqId": "string (Optional)"
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "status": "success",
+    "audio": [0.012, -0.005, ...],
+    "sampling_rate": 32000
+  }
+  ```
 
 #### 6. Speech-to-Text (`POST /api/stt`)
 - **Body**: `multipart/form-data`
-  - `audio`: File (WAV/MP3)
-- **Response**: `{"text": "string"}`
+  - `audio`: File (Binary WAV/MP3 - Required)
+  - `reqId`: string (Optional)
+- **Response**:
+  ```json
+  {
+    "text": "string"
+  }
+  ```
 
 #### 7. Text-to-Speech (`POST /api/tts`)
-- **Body**: `{"text": "string", "modelId": "string"}`
-- **Response**: `{"audio": [...], "sampling_rate": number}`
+- **Body**:
+  ```json
+  {
+    "text": "string (Required)",
+    "modelId": "string (Optional)",
+    "reqId": "string (Optional)"
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "audio": [0.0, 0.05, ...],
+    "sampling_rate": 24000
+  }
+  ```
+
+#### 8. Health Check (`GET /api/health`)
+- **Response**:
+  ```json
+  {
+    "status": "ok",
+    "pid": 12345
+  }
+  ```
+
+#### 9. Conversation History Management
+- **Archive History (`POST /api/archive-history`)**:
+  - **Body**: `{"oldReqId": "string", "newReqId": "string"}`
+  - **Response**: `{"success": true, "message": "Archived oldReqId to newReqId"}`
+- **Purge History (`POST /api/purge-history`)**:
+  - **Body**: `{"reqId": "string"}`
+  - **Response**: `{"success": true, "message": "Purged reqId: ..."}`
 
 ### Example Usage (CURL)
 ```bash
-curl -X POST http://localhost:7770/api/text \
+curl -X POST http://localhost:9777/api/text \
      -H "Content-Type: application/json" \
-     -d '{"prompt": "Hello Omnix!"}'
+     -d '{"prompt": "Hello Omnix!", "temperature": 0.7}'
 ```
 
 ---
@@ -65,7 +186,7 @@ Omnix can be used as a backend service for your own applications.
 
 - **Silent Start**: `omnix --silent` (Starts the engine without opening any GUI window)
 - **Process Attachment**: `omnix --dependent-pid <PID>` (Omnix will automatically shut down when the parent PID is no longer active)
-- **Port Selection**: Use the `PORT` environment variable to override the default 7770 port.
+- **Port Selection**: Use the `PORT` environment variable to override the default 9777 port.
 - **Singleton Pattern**: Starting a second instance of Omnix on the same port will return the PID of the existing process to `stdout` and exit immediately.
 
 ---
@@ -124,7 +245,7 @@ To build the application for production:
 
 ### Troubleshooting
 - **WebGPU Errors**: Ensure your graphics drivers are up to date. Some older GPUs may not support WebGPU.
-- **Port Conflicts**: If port 7770 is occupied, the Brain API may fail to start. Ensure no other instances of Omnix are running on port 7770.
+- **Port Conflicts**: If port 9777 is occupied, the Brain API may fail to start. Ensure no other instances of Omnix are running on port 9777.
 
 ---
 

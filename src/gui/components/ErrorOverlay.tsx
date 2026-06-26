@@ -1,11 +1,12 @@
 import { motion, AnimatePresence } from "motion/react";
-import { Activity } from "lucide-react";
+import { Activity, Copy } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ErrorReport } from "@shared/types";
 
 interface ErrorOverlayProps {
-  error: string | null;
-  setError: (val: string | null) => void;
+  error: ErrorReport | null;
+  setError: (val: ErrorReport | null) => void;
   setDidError: (val: boolean) => void;
   loadModel: (cat: string) => void;
   clearCache: () => void;
@@ -22,24 +23,31 @@ export function ErrorOverlay({
   safeMode,
   setSafeMode
 }: ErrorOverlayProps) {
-  const isOOMError = error?.toLowerCase().includes("bad_alloc") || 
-                    error?.toLowerCase().includes("out of memory") ||
-                    error?.toLowerCase().includes("memory") ||
-                    error?.toLowerCase().includes("array buffer") ||
-                    error?.toLowerCase().includes("std::bad_alloc") ||
-                    error?.includes("11514632");
+  const errorMessage = error ? error.message : "";
+  const isOOMError = errorMessage.toLowerCase().includes("bad_alloc") || 
+                    errorMessage.toLowerCase().includes("out of memory") ||
+                    errorMessage.toLowerCase().includes("memory") ||
+                    errorMessage.toLowerCase().includes("array buffer") ||
+                    errorMessage.toLowerCase().includes("std::bad_alloc") ||
+                    errorMessage.includes("11514632");
   
-  const isQuotaError = error?.toLowerCase().includes("quota") || 
-                      error?.toLowerCase().includes("disk") || 
-                      error?.toLowerCase().includes("space");
+  const isQuotaError = errorMessage.toLowerCase().includes("quota") || 
+                      errorMessage.toLowerCase().includes("disk") || 
+                      errorMessage.toLowerCase().includes("space");
 
-  const isGPUError = error?.toLowerCase().includes("gpu") || 
-                    error?.toLowerCase().includes("adapter") || 
-                    error?.toLowerCase().includes("backend found") ||
-                    error?.toLowerCase().includes("failed to get gpu") ||
-                    error?.toLowerCase().includes("webgpu") ||
-                    error?.toLowerCase().includes("device lost") ||
-                    error?.toLowerCase().includes("gpudevice");
+  const isGPUError = errorMessage.toLowerCase().includes("gpu") || 
+                    errorMessage.toLowerCase().includes("adapter") || 
+                    errorMessage.toLowerCase().includes("backend found") ||
+                    errorMessage.toLowerCase().includes("failed to get gpu") ||
+                    errorMessage.toLowerCase().includes("webgpu") ||
+                    errorMessage.toLowerCase().includes("device lost") ||
+                    errorMessage.toLowerCase().includes("gpudevice");
+
+  const handleCopyReport = () => {
+    if (!error) return;
+    const md = `### 🚨 Crash Report\n\n**Error:**\n\`\`\`\n${error.message}\n\`\`\`\n\n**Active Model:** \`${error.activeModel || "Unknown"}\`\n**Context Length (Chars):** \`${error.contextLength || 0}\`\n\n**Raw Prompt:**\n\`\`\`\n${error.rawPrompt || "N/A"}\n\`\`\``;
+    navigator.clipboard.writeText(md);
+  };
 
   return (
     <AnimatePresence>
@@ -58,7 +66,13 @@ export function ErrorOverlay({
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4 pt-0 text-[10px] font-mono opacity-80 leading-relaxed break-all">
-              {error}
+              <div className="mb-2">
+                <span className="font-bold text-red-300">Model:</span> {error.activeModel || "Unknown"} <br/>
+                <span className="font-bold text-red-300">Context:</span> {error.contextLength || 0} chars
+              </div>
+              <div className="p-2 bg-red-900/30 rounded border border-red-500/20 max-h-32 overflow-y-auto custom-scrollbar">
+                {errorMessage}
+              </div>
               {isGPUError && (
                 <div className="mt-3 p-2 bg-red-900/40 border border-red-500/30 rounded text-[9px] space-y-1">
                   <p className="font-bold text-red-100 uppercase">GPU Device Recovery Protocol:</p>
@@ -96,6 +110,9 @@ export function ErrorOverlay({
               )}
             </CardContent>
             <CardFooter className="p-3 bg-red-900/20 flex justify-end gap-2">
+              <Button variant="ghost" size="sm" className="h-7 text-[10px] hover:bg-red-500/20" onClick={handleCopyReport}>
+                <Copy className="w-3 h-3 mr-1" /> Copy Report
+              </Button>
               <Button variant="ghost" size="sm" className="h-7 text-[10px] hover:bg-red-500/20" onClick={() => { setError(null); setDidError(false); }}>Dismiss</Button>
               {!isQuotaError && <Button variant="outline" size="sm" className="h-7 text-[10px] border-red-500/50 hover:bg-red-500/20" onClick={() => loadModel("text")}>Retry Load</Button>}
               {isQuotaError && <Button variant="destructive" size="sm" className="h-7 text-[10px]" onClick={clearCache}>Clear Cache</Button>}

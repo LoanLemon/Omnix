@@ -81,7 +81,7 @@ class KokoroEngine {
     /**
      * Generates an AudioBuffer from text.
      */
-    async generate(text: string, voice: string = "af_bella"): Promise<AudioBuffer> {
+    async generate(text: string, voice: string = "af_heart"): Promise<AudioBuffer> {
         if (!this.initialized) await this.init();
 
         // Clean text for natural speech (remove markdown, handle pauses)
@@ -138,9 +138,62 @@ class KokoroEngine {
     }
 
     /**
+     * Generates raw audio data (Float32Array) from text.
+     */
+    async generateRaw(text: string, voice: string = "af_heart"): Promise<{ audio: Float32Array; sampling_rate: number }> {
+        if (!this.initialized) await this.init();
+
+        const cleanText = text
+            .replace(/[*_`#~]/g, '')
+            .replace(/\[.*?\]\(.*?\)/g, '')
+            .replace(/[()]/g, ' ')
+            .trim();
+
+        if (!cleanText) throw new Error("Text is empty after cleaning");
+
+        console.log(`Generating raw speech for: "${cleanText.slice(0, 50)}${cleanText.length > 50 ? '...' : ''}"`);
+
+        try {
+            const start = performance.now();
+            const result = await this.tts.generate(cleanText, { voice });
+            const end = performance.now();
+            
+            console.log(`Speech generated in ${(end - start).toFixed(0)}ms`);
+            
+            const audioData = result.audio || result.data || result;
+            const samplingRate = result.sampling_rate || result.samplingRate || 24000;
+
+            if (!audioData || !(audioData instanceof Float32Array)) {
+                console.error("Invalid audio data structure:", result);
+                throw new Error("Invalid audio data format received");
+            }
+
+            // Normalize audio to prevent distortion
+            let max = 0;
+            for (let i = 0; i < audioData.length; ++i) {
+                const abs = Math.abs(audioData[i]);
+                if (abs > max) max = abs;
+            }
+            if (max > 1) {
+                for (let i = 0; i < audioData.length; ++i) {
+                    audioData[i] /= max;
+                }
+            }
+
+            return {
+                audio: audioData,
+                sampling_rate: samplingRate
+            };
+        } catch (err) {
+            console.error("Speech raw generation error:", err);
+            throw err;
+        }
+    }
+
+    /**
      * Plays the generated audio.
      */
-    async speak(input: string | AudioBuffer, voice: string = "af_bella", onStart?: () => void) {
+    async speak(input: string | AudioBuffer, voice: string = "af_heart", onStart?: () => void) {
         const sessionId = ++this.playSessionId;
         
         if (!this.initialized) await this.init();

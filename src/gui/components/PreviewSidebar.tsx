@@ -12,6 +12,7 @@ export function PreviewSidebar() {
     setActiveTab,
     sandboxFiles,
     generatedImage,
+    chatMode,
     showMemoryDashboard,
     setShowMemoryDashboard
   } = useApp();
@@ -19,7 +20,7 @@ export function PreviewSidebar() {
   // Dynamic activeTab fallback and shifting
   useEffect(() => {
     if (activeTab === "chat") {
-      if (sandboxFiles.length > 0) {
+      if (sandboxFiles.length > 0 || chatMode === "sandbox") {
         setActiveTab("sandbox");
       } else if (generatedImage) {
         setActiveTab("gallery");
@@ -27,34 +28,36 @@ export function PreviewSidebar() {
         setActiveTab("memory");
       }
     } else if (activeTab === "memory" && !showMemoryDashboard) {
-      if (sandboxFiles.length > 0) {
+      if (sandboxFiles.length > 0 || chatMode === "sandbox") {
         setActiveTab("sandbox");
       } else if (generatedImage) {
         setActiveTab("gallery");
       }
-    } else if (activeTab === "sandbox" && sandboxFiles.length === 0) {
+    } else if (activeTab === "sandbox" && sandboxFiles.length === 0 && chatMode !== "sandbox") {
       if (generatedImage) {
         setActiveTab("gallery");
       } else if (showMemoryDashboard) {
         setActiveTab("memory");
       }
     } else if (activeTab === "gallery" && !generatedImage) {
-      if (sandboxFiles.length > 0) {
+      if (sandboxFiles.length > 0 || chatMode === "sandbox") {
         setActiveTab("sandbox");
       } else if (showMemoryDashboard) {
         setActiveTab("memory");
       }
     }
-  }, [activeTab, sandboxFiles, generatedImage, showMemoryDashboard, setActiveTab]);
+  }, [activeTab, sandboxFiles, generatedImage, showMemoryDashboard, setActiveTab, chatMode]);
+
+  const isExpandedSandbox = activeTab === 'sandbox' && chatMode === 'sandbox';
 
   return (
-    <aside id="omnix-preview-sidebar" className="w-[420px] border-l border-border bg-background flex flex-col shrink-0 overflow-hidden relative">
+    <aside id="omnix-preview-sidebar" className={`${isExpandedSandbox ? "flex-[2] min-w-[600px]" : "w-[420px]"} border-l border-border bg-background flex flex-col shrink-0 overflow-hidden relative transition-all duration-300`}>
       {/* Visual Accent Bar */}
       <div className="absolute inset-y-0 left-0 w-[1px] bg-gradient-to-b from-transparent via-orange-500/10 to-transparent" />
       
       <div className="h-11 border-b border-border flex items-center px-4 gap-4 bg-muted/60 justify-between">
         <div className="flex gap-4">
-          {sandboxFiles.length > 0 && (
+          {(sandboxFiles.length > 0 || chatMode === "sandbox") && (
             <button 
               className={`text-[9.5px] font-mono font-bold uppercase tracking-widest pb-3.5 pt-3.5 border-b-2 transition-colors cursor-pointer ${activeTab === 'sandbox' ? 'border-orange-500 text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
               onClick={() => setActiveTab('sandbox')}

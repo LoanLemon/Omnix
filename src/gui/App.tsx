@@ -5,6 +5,8 @@
 
 import { AppLogicProvider } from "@/context/AppLogicProvider";
 import { useApp } from "@/context/AppContext";
+import { useState } from "react";
+import { AlertTriangle, X, ChevronDown, ChevronUp } from "lucide-react";
 
 // Components
 import { Header } from "@/components/Header";
@@ -42,8 +44,23 @@ function AppContent() {
     activeAuthRequest,
     respondToAuth,
     showMemoryDashboard,
-    setShowMemoryDashboard
+    setShowMemoryDashboard,
+    hasWebGPU,
+    chatMode
   } = useApp();
+
+  const [isGpuNoticeDismissed, setIsGpuNoticeDismissed] = useState(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("omnix_gpu_notice_dismissed") === "true";
+    }
+    return false;
+  });
+  const [showGpuInstructions, setShowGpuInstructions] = useState(false);
+
+  const dismissGpuNotice = () => {
+    setIsGpuNoticeDismissed(true);
+    sessionStorage.setItem("omnix_gpu_notice_dismissed", "true");
+  };
 
   if (isWorkerMode) {
     return (
@@ -89,6 +106,72 @@ function AppContent() {
         clearCache={clearCache}
       />
 
+      {hasWebGPU === false && !isGpuNoticeDismissed && (
+        <div className="bg-amber-500/10 border-b border-amber-500/20 px-6 py-3 relative z-40 text-xs text-foreground animate-in fade-in slide-in-from-top-4 duration-300 shrink-0">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="p-1 rounded bg-amber-500/20 border border-amber-500/30 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5">
+                <AlertTriangle className="w-4 h-4 animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <p className="font-semibold font-mono tracking-wide text-amber-700 dark:text-amber-400 uppercase text-[10px]">
+                  Hardware Acceleration Disabled / WebGPU Unsupported
+                </p>
+                <p className="text-muted-foreground leading-relaxed max-w-4xl text-[11px]">
+                  Omnix detected that WebGPU acceleration is unavailable. This usually happens when <strong>hardware acceleration</strong> is turned off in your browser settings, preventing high-speed neural processing.
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3 shrink-0 self-end md:self-center font-mono">
+              <button 
+                onClick={() => setShowGpuInstructions(!showGpuInstructions)}
+                className="px-3 py-1.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer"
+              >
+                {showGpuInstructions ? "Hide Guide" : "How to Enable"}
+                {showGpuInstructions ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+              <button 
+                onClick={dismissGpuNotice}
+                className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                aria-label="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {showGpuInstructions && (
+            <div className="max-w-7xl mx-auto mt-4 pt-4 border-t border-amber-500/10 grid grid-cols-1 md:grid-cols-3 gap-4 text-[11px] leading-relaxed animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="p-3 rounded bg-black/5 dark:bg-white/5 border border-border/50">
+                <h4 className="font-bold text-foreground mb-1.5 font-mono">🌐 Google Chrome & Brave</h4>
+                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                  <li>Open <code className="px-1 py-0.5 bg-muted rounded font-mono text-[10px]">chrome://settings/system</code></li>
+                  <li>Enable <span className="font-medium text-foreground">"Use graphics acceleration when available"</span></li>
+                  <li>Relaunch the browser and refresh this page.</li>
+                </ol>
+              </div>
+              <div className="p-3 rounded bg-black/5 dark:bg-white/5 border border-border/50">
+                <h4 className="font-bold text-foreground mb-1.5 font-mono">🌐 Microsoft Edge</h4>
+                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                  <li>Open <code className="px-1 py-0.5 bg-muted rounded font-mono text-[10px]">edge://settings/system</code></li>
+                  <li>Enable <span className="font-medium text-foreground">"Use graphics acceleration when available"</span></li>
+                  <li>Click <span className="font-medium text-foreground">"Restart"</span> to apply the settings.</li>
+                </ol>
+              </div>
+              <div className="p-3 rounded bg-black/5 dark:bg-white/5 border border-border/50">
+                <h4 className="font-bold text-foreground mb-1.5 font-mono">🦊 Mozilla Firefox</h4>
+                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                  <li>Go to <span className="font-medium text-foreground">Settings &gt; General &gt; Performance</span></li>
+                  <li>Uncheck <span className="font-medium text-foreground">"Use recommended performance settings"</span></li>
+                  <li>Check <span className="font-medium text-foreground">"Use hardware acceleration when available"</span></li>
+                </ol>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 flex overflow-hidden">
         {showSidebar && (
           <Sidebar 
@@ -116,7 +199,7 @@ function AppContent() {
           handleOptionSelect={() => {}}
         />
 
-        {(sandboxFiles.length > 0 || generatedImage || showMemoryDashboard) && (
+        {(sandboxFiles.length > 0 || generatedImage || showMemoryDashboard || chatMode === "sandbox") && (
           <PreviewSidebar />
         )}
       </div>

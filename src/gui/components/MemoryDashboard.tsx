@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 
 export function MemoryDashboard() {
-  const { messages, addLog, emotionalState, setEmotionalState, focusTopics, enableFocusTopics } = useApp();
+  const { messages, addLog, emotionalState, setEmotionalState, focusTopics, enableFocusTopics, contextMemoryLimit, setContextMemoryLimit } = useApp();
 
   // --- Persistent Inner State ---
   const [socialBattery, setSocialBattery] = useState<number>(() => {
@@ -198,19 +198,42 @@ export function MemoryDashboard() {
 
               {/* Rolling short term chats list (from useAppContext message queue) */}
               <div className="space-y-1.5 pt-1.5 border-t border-border/35">
-                <div className="text-[9px] font-mono text-muted-foreground/60 uppercase">Working Frame Messages (chatLog)</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-[9px] font-mono text-muted-foreground/60 uppercase">Context Retention (Chars)</div>
+                  <div className="text-[9px] font-mono text-orange-500">{contextMemoryLimit}</div>
+                </div>
+                <Slider 
+                  value={[contextMemoryLimit]}
+                  min={4096}
+                  max={65536}
+                  step={1024}
+                  onValueChange={(val) => setContextMemoryLimit(val[0])}
+                  className="mb-2"
+                />
                 <div className="max-h-[110px] overflow-y-auto space-y-1.5 pr-0.5 custom-scrollbar">
-                  {messages.filter(m => !m.hidden).slice(-3).map((m, i) => (
-                    <div key={i} className="text-[9.5px] font-mono leading-tight bg-black/15 p-1.5 border border-white/5 flex flex-col gap-1">
-                      <div className="flex justify-between text-[7.5px] opacity-40 font-bold uppercase text-muted-foreground">
-                        <span>{m.role === "user" ? "USR" : "BOT"}</span>
-                        <span>{m.timestamp || "PRE_INDEX_TIME"}</span>
+                  {(() => {
+                    const visibleMsgs = messages.filter(m => !m.hidden);
+                    const retained = [];
+                    let len = 0;
+                    for (let i = visibleMsgs.length - 1; i >= 0; i--) {
+                      const m = visibleMsgs[i];
+                      const mLen = (m.content?.length || 0) + (m.image ? 500 : 0);
+                      if (retained.length > 0 && len + mLen > contextMemoryLimit) break;
+                      retained.unshift(m);
+                      len += mLen;
+                    }
+                    return retained.map((m, i) => (
+                      <div key={i} className="text-[9.5px] font-mono leading-tight bg-black/15 p-1.5 border border-white/5 flex flex-col gap-1">
+                        <div className="flex justify-between text-[7.5px] opacity-40 font-bold uppercase text-muted-foreground">
+                          <span>{m.role === "user" ? "USR" : "BOT"}</span>
+                          <span>{m.timestamp || "PRE_INDEX_TIME"}</span>
+                        </div>
+                        <div className="truncate text-foreground/80 font-normal">
+                          {m.content || "[Image/Media]"}
+                        </div>
                       </div>
-                      <div className="truncate text-foreground/80 font-normal">
-                        {m.content}
-                      </div>
-                    </div>
-                  ))}
+                    ));
+                  })()}
                   {messages.filter(m => !m.hidden).length === 0 && (
                     <div className="text-[8.5px] italic text-muted-foreground/40 font-mono p-1">
                       No global messages loaded in active frameset.

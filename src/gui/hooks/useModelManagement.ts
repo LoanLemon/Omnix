@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { MODELS } from "@shared/modelList";
+import { MODELS, getRequiredRamForModel, getBestFittingQtype } from "@shared/modelList";
 import { browserEngine } from "@/lib/ModelEngine";
+import { ErrorReport } from "@shared/types";
 
 export function useModelManagement(
   systemRam: number, 
   isRamDetected: boolean,
   addLog: (msg: string, type?: "info" | "error" | "success") => void,
-  setError: (msg: string | null) => void,
+  setError: (msg: ErrorReport | null) => void,
   setDidError: (val: boolean) => void
 ) {
   const filteredModelsList = MODELS;
@@ -21,14 +22,28 @@ export function useModelManagement(
     director: "use-text-model",
     coder: "qwen-2.5-coder-3b-q4",
   });
+  const [selectedQtypes, setSelectedQtypes] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    MODELS.forEach(m => {
+      initial[m.id] = getBestFittingQtype(m, systemRam);
+    });
+    return initial;
+  });
   const [activeCategory, setActiveCategory] = useState<string>("director");
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState<Record<string, { progress: number; status: string }>>({});
   const [loadedModelId, setLoadedModelId] = useState<string | null>(null);
 
+  const selectedQtypesRef = useRef(selectedQtypes);
+  useEffect(() => {
+    selectedQtypesRef.current = selectedQtypes;
+  }, [selectedQtypes]);
+
   const isCategoryDisabled = useCallback((cat: string) => {
-    return !filteredModelsList.some(m => m.category === cat && (!m.minRam || m.minRam <= systemRam));
+    return !filteredModelsList.some(m => m.category === cat && 
+      (m.qtypes || [m.dtype || "q4"]).some(q => getRequiredRamForModel(m, q) <= systemRam)
+    );
   }, [systemRam, filteredModelsList]);
 
   const loadModel = useCallback(async (category: string, modelId?: string, skipLoadingVisuals = false) => {
@@ -42,18 +57,35 @@ export function useModelManagement(
 
     let modelInfo = filteredModelsList.find((m) => m.id === id);
     
-    if (modelInfo && modelInfo.minRam && modelInfo.minRam > systemRam) {
-      const fallback = filteredModelsList
-        .filter(m => m.category === category && (!m.minRam || m.minRam <= systemRam))
-        .sort((a, b) => (b.minRam || 0) - (a.minRam || 0))[0];
-      
-      if (fallback) {
-        id = fallback.id;
-        modelInfo = fallback;
-        setSelectedModels(prev => ({ ...prev, [category]: id }));
+    if (modelInfo && getRequiredRamForModel(modelInfo, selectedQtypes[id]) > systemRam) {
+      // Find if we can just change to a fitting QTYPE for the SAME model first!
+      const currentModelInfo = modelInfo;
+      const bestFitQtype = (currentModelInfo.qtypes || []).find(q => getRequiredRamForModel(currentModelInfo, q) <= systemRam);
+      if (bestFitQtype) {
+        setSelectedQtypes(prev => ({ ...prev, [id]: bestFitQtype }));
       } else {
-        setError(`No models in ${category} fit your RAM (~${systemRam}GB).`);
-        return;
+        // No QTYPE fits, search for fallback model
+        const fallback = filteredModelsList
+          .filter(m => m.category === category && (m.qtypes || [m.dtype || "q4"]).some(q => getRequiredRamForModel(m, q) <= systemRam))
+          .sort((a, b) => {
+            const aMin = Math.min(...(a.qtypes || [a.dtype || "q4"]).map(q => getRequiredRamForModel(a, q)));
+            const bMin = Math.min(...(b.qtypes || [b.dtype || "q4"]).map(q => getRequiredRamForModel(b, q)));
+            return bMin - aMin;
+          })[0];
+        
+        if (fallback) {
+          id = fallback.id;
+          modelInfo = fallback;
+          setSelectedModels(prev => ({ ...prev, [category]: id }));
+          const fallbackQtype = getBestFittingQtype(fallback, systemRam);
+          setSelectedQtypes(prev => ({ ...prev, [fallback.id]: fallbackQtype }));
+        } else {
+          setError({
+            message: `No models in ${category} fit your RAM (~${systemRam}GB).`,
+            activeModel: modelId || selectedModels[category]
+          });
+          return;
+        }
       }
     }
 
@@ -67,6 +99,7 @@ export function useModelManagement(
     }
 
     try {
+      const customDtype = selectedQtypes[id];
       await browserEngine.loadModel(actualCategory, id, (p: any) => {
         if (skipLoadingVisuals) return;
         if (p.status === "progress") {
@@ -80,24 +113,27 @@ export function useModelManagement(
             [p.file || "engine"]: { progress: 100, status: p.status === "init" ? `Initializing ${p.file || "Engine"}` : "Model Loaded" }
           }));
         }
-      });
+      }, customDtype);
       
       setLoadedModelId(id);
       setIsModelReady(true);
       setIsModelLoading(false);
       setLoadingProgress({});
       if (!skipLoadingVisuals) {
-        addLog(`Engine Ready: ${modelInfo.name}`, "success");
+        addLog(`Engine Ready: ${modelInfo.name}${customDtype ? ` (${customDtype.toUpperCase()})` : ""}`, "success");
       } else {
         addLog(`Engine active: ${modelInfo.name} (retained from Director)`, "success");
       }
     } catch (err: any) {
       addLog(`Engine Error: ${err.message}`, "error");
-      setError(err.message);
+      setError({
+        message: err.message,
+        activeModel: id
+      });
       setDidError(true);
       setIsModelLoading(false);
     }
-  }, [selectedModels, systemRam, filteredModelsList, setError, addLog]);
+  }, [selectedModels, selectedQtypes, systemRam, filteredModelsList, setError, addLog, setDidError]);
 
   useEffect(() => {
     if (!isRamDetected) return;
@@ -105,26 +141,49 @@ export function useModelManagement(
     setSelectedModels(prev => {
       let changed = false;
       const next = { ...prev };
+      const currentQtypes = selectedQtypesRef.current;
+
       ["text", "vision", "stt", "tts", "image-gen", "music-gen", "director", "coder"].forEach(cat => {
         const currentId = prev[cat];
         const currentModel = filteredModelsList.find(m => m.id === currentId);
-        if (currentModel && (!currentModel.minRam || currentModel.minRam <= systemRam)) {
+        if (currentModel && getRequiredRamForModel(currentModel, currentQtypes[currentId]) <= systemRam) {
           return;
         }
 
-        const possible = filteredModelsList.filter(m => m.category === cat && (!m.minRam || m.minRam <= systemRam));
+        // Check if current model fits at a different QTYPE first
+        if (currentModel) {
+          const alternativeQtype = (currentModel.qtypes || []).find(q => getRequiredRamForModel(currentModel, q) <= systemRam);
+          if (alternativeQtype) {
+            setSelectedQtypes(prevQ => ({ ...prevQ, [currentId]: alternativeQtype }));
+            return;
+          }
+        }
+
+        const possible = filteredModelsList.filter(m => m.category === cat && (m.qtypes || [m.dtype || "q4"]).some(q => getRequiredRamForModel(m, q) <= systemRam));
         
         if (possible.length > 0) {
           changed = true;
+          let chosenModelId = possible[0].id;
           if (cat === "text") {
             const preferred = possible.find(m => m.id === "qwen-3-0.6b-q4-text");
-            next[cat] = preferred ? preferred.id : possible[0].id;
+            chosenModelId = preferred ? preferred.id : possible[0].id;
           } else if (cat === "director") {
             const preferred = possible.find(m => m.id === "use-text-model");
-            next[cat] = preferred ? preferred.id : possible[0].id;
+            chosenModelId = preferred ? preferred.id : possible[0].id;
           } else {
-            const sorted = [...possible].sort((a, b) => (b.minRam || 0) - (a.minRam || 0));
-            next[cat] = sorted[0].id;
+            const sorted = [...possible].sort((a, b) => {
+              const aMin = Math.min(...(a.qtypes || [a.dtype || "q4"]).map(q => getRequiredRamForModel(a, q)));
+              const bMin = Math.min(...(b.qtypes || [b.dtype || "q4"]).map(q => getRequiredRamForModel(b, q)));
+              return bMin - aMin;
+            });
+            chosenModelId = sorted[0].id;
+          }
+          next[cat] = chosenModelId;
+
+          const chosenModel = possible.find(m => m.id === chosenModelId);
+          if (chosenModel) {
+            const compatibleQtype = getBestFittingQtype(chosenModel, systemRam);
+            setSelectedQtypes(prevQ => ({ ...prevQ, [chosenModelId]: compatibleQtype }));
           }
         }
       });
@@ -135,6 +194,8 @@ export function useModelManagement(
   return {
     selectedModels,
     setSelectedModels,
+    selectedQtypes,
+    setSelectedQtypes,
     activeCategory,
     setActiveCategory,
     isModelLoading,

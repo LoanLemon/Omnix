@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useApp } from "../context/AppContext";
 import { ChatMode } from "@shared/types";
 import { useState } from "react";
@@ -34,12 +35,22 @@ export function Header({
     setShowMemoryDashboard,
     setActiveTab,
     emotionalState,
-    setEmotionalState
+    setEmotionalState,
+    openNewTab,
+    chatTabs,
+    activeTabId,
+    renameTab
   } = useApp();
 
   const [isApiGuideOpen, setIsApiGuideOpen] = useState(false);
+  const [sandboxPromptOpen, setSandboxPromptOpen] = useState(false);
 
   const handleModeChange = (val: ChatMode) => {
+    if (val === "sandbox") {
+      setSandboxPromptOpen(true);
+      return;
+    }
+
     setChatMode(val);
     if (val === "live" && !isLiveMode) {
       toggleLiveMode();
@@ -47,10 +58,21 @@ export function Header({
       toggleLiveMode();
     }
 
-    if (val === "sandbox") {
-      setIsCoderMode(true);
+    setIsCoderMode(false);
+  };
+
+  const handleSandboxConfirm = (createNew: boolean) => {
+    setSandboxPromptOpen(false);
+    setActiveTab("sandbox");
+    if (createNew) {
+      openNewTab(false, "sandbox");
     } else {
-      setIsCoderMode(false);
+      setChatMode("sandbox");
+      setIsCoderMode(true);
+      const currentTab = chatTabs.find(t => t.id === activeTabId);
+      if (currentTab && (currentTab.name === "New Chat" || currentTab.name === "Temporary Chat" || currentTab.name.startsWith("Chat #"))) {
+        renameTab(activeTabId, "Sandbox Session");
+      }
     }
   };
 
@@ -87,7 +109,7 @@ export function Header({
         <div className="flex items-center gap-3">
           <div className="flex flex-col items-end">
             <span className="text-[8px] font-mono text-muted-foreground uppercase tracking-widest mb-0.5 opacity-50">Operational Mode</span>
-            <Select value={chatMode} onValueChange={(val) => handleModeChange(val as ChatMode)}>
+            <Select value={chatMode} onValueChange={(val) => handleModeChange(val as ChatMode)} disabled={chatMode === "sandbox"}>
               <SelectTrigger className="h-7 w-40 bg-muted/30 border-border text-[10px] text-foreground font-mono focus:ring-orange-500/30 hover:border-orange-500/30 transition-all rounded-sm">
                 <SelectValue />
               </SelectTrigger>
@@ -230,6 +252,27 @@ export function Header({
       </div>
 
       <ApiGuideModal isOpen={isApiGuideOpen} onClose={() => setIsApiGuideOpen(false)} />
+
+      <Dialog open={sandboxPromptOpen} onOpenChange={setSandboxPromptOpen}>
+        <DialogContent className="bg-popover border-border">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-foreground">Sandbox Session</DialogTitle>
+            <DialogDescription className="font-mono text-muted-foreground mt-2">
+              Sandbox mode is a dedicated programming playground. A Chat Session can be converted to a Sandbox Session, but you cannot convert a Sandbox Session back to a Chat Session.
+              <br /><br />
+              Would you like to convert the current chat, or start a new Sandbox Session?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4 flex gap-2">
+            <Button variant="outline" onClick={() => handleSandboxConfirm(false)} className="font-mono text-xs">
+              Convert Current
+            </Button>
+            <Button onClick={() => handleSandboxConfirm(true)} className="bg-orange-600 hover:bg-orange-700 text-white font-mono text-xs">
+              Create New
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </header>
   );
 }

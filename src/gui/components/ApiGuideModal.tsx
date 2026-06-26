@@ -521,9 +521,9 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                         <div className="col-span-6 text-zinc-500">The textual message content to read.</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">modelId</div>
+                        <div className="col-span-3 text-orange-500">voiceID</div>
                         <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Timbre pattern/voice id to load in background.</div>
+                        <div className="col-span-6 text-zinc-500">The specific Kokoro voice ID to use. Default is 'af_heart'.</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
                         <div className="col-span-3 text-orange-500">reqId</div>
@@ -543,7 +543,7 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                           <pre className="text-zinc-300">
 {`{
   "text": "Intelligent system online. All operations active.",
-  "modelId": "tts-voice-male-1"
+  "voiceID": "af_heart"
 }`}
                           </pre>
                         </div>

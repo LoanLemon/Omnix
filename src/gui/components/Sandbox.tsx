@@ -10,27 +10,59 @@ interface SandboxProps {
 }
 
 export function Sandbox({ files }: SandboxProps) {
-  const { theme } = useApp();
+  const { theme, handleSendInternal } = useApp();
   const [output, setOutput] = useState<string[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState(0);
-  const [viewMode, setViewMode] = useState<"preview" | "code">("preview");
+  const [viewMode, setViewMode] = useState<"preview" | "code" | "split">("split");
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  
+  // Use a ref to store the latest error sent so we don't spam the same error in loop
+  const lastErrorSentRef = useRef<string | null>(null);
 
   const activeFile = files[activeFileIndex] || files[0];
 
   const runCode = () => {
     if (!iframeRef.current || files.length === 0) return;
     setOutput([]);
+    lastErrorSentRef.current = null;
 
-    const entryFile = files.find(f => f.name === "index.html") || 
-                      files.find(f => f.name.startsWith("index.")) || 
+    const entryFile = files.find(f => f.name.toLowerCase() === "index.html" || f.name.toLowerCase().endsWith("/index.html")) || 
+                      files.find(f => f.name.toLowerCase().startsWith("index.") || f.name.toLowerCase().includes("/index.")) || 
                       files[0];
 
-    const isHtml = entryFile.language === 'html';
+    const isHtml = (entryFile?.language || "html").toLowerCase() === 'html' || entryFile.name.toLowerCase().endsWith('.html');
     
     let srcDoc = "";
     if (isHtml) {
       srcDoc = entryFile.content;
+      
+      // Inline CSS and JS files so they work in the blob iframe
+      files.forEach(f => {
+        if (f === entryFile) return;
+        const fileName = f.name.split('/').pop();
+        if (!fileName) return;
+
+        if (f.name.endsWith('.css')) {
+          const regex = new RegExp(`<link[^>]*href=['"].*?${fileName}['"][^>]*>`, 'gi');
+          if (regex.test(srcDoc)) {
+            srcDoc = srcDoc.replace(regex, `<style>${f.content}</style>`);
+          } else if (srcDoc.toLowerCase().includes('</head>')) {
+            srcDoc = srcDoc.replace(/<\/head>/i, `<style>${f.content}</style></head>`);
+          } else {
+            srcDoc += `<style>${f.content}</style>`;
+          }
+        } else if (f.name.endsWith('.js') || f.name.endsWith('.ts') || f.name.endsWith('.jsx') || f.name.endsWith('.tsx')) {
+          const regex = new RegExp(`<script[^>]*src=['"].*?${fileName}['"][^>]*><\\/script>`, 'gi');
+          if (regex.test(srcDoc)) {
+            srcDoc = srcDoc.replace(regex, `<script>${f.content}</script>`);
+          } else if (srcDoc.toLowerCase().includes('</body>')) {
+            srcDoc = srcDoc.replace(/<\/body>/i, `<script>${f.content}</script></body>`);
+          } else {
+            srcDoc += `<script>${f.content}</script>`;
+          }
+        }
+      });
+
       const logScript = `
         <script>
           const originalLog = console.log;
@@ -47,6 +79,7 @@ export function Sandbox({ files }: SandboxProps) {
       srcDoc = srcDoc.replace('<head>', `<head>${logScript}`);
       if (!srcDoc.includes('<head>')) srcDoc = logScript + srcDoc;
     } else {
+      // For TypeScript/React, we inject Babel standalone and an import map for basic dependencies
       srcDoc = `
         <!DOCTYPE html>
         <html>
@@ -61,6 +94,18 @@ export function Sandbox({ files }: SandboxProps) {
               }
               pre { white-space: pre-wrap; word-break: break-all; }
             </style>
+            <!-- Import map for common dependencies -->
+            <script type="importmap">
+              {
+                "imports": {
+                  "react": "https://esm.sh/react@18",
+                  "react-dom/client": "https://esm.sh/react-dom@18/client",
+                  "lucide-react": "https://esm.sh/lucide-react"
+                }
+              }
+            </script>
+            <!-- Babel for in-browser transpilation of TypeScript/React -->
+            <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
           </head>
           <body>
             <div id="root"></div>
@@ -74,6 +119,8 @@ export function Sandbox({ files }: SandboxProps) {
                 window.parent.postMessage({ type: 'sandbox-error', data: msg }, '*');
                 return false;
               };
+            </script>
+            <script type="text/babel" data-type="module" data-presets="env,react,typescript">
               try {
                 ${entryFile.content}
               } catch (e) {
@@ -85,7 +132,16 @@ export function Sandbox({ files }: SandboxProps) {
       `;
     }
 
-    iframeRef.current.srcdoc = srcDoc;
+    // Deploy the project as an iframe "blob" object
+    const blob = new Blob([srcDoc], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    
+    // Revoke previous blob URL if it exists to avoid memory leaks
+    if (iframeRef.current.src && iframeRef.current.src.startsWith('blob:')) {
+      URL.revokeObjectURL(iframeRef.current.src);
+    }
+    
+    iframeRef.current.src = url;
   };
 
   useEffect(() => {
@@ -93,13 +149,25 @@ export function Sandbox({ files }: SandboxProps) {
       if (event.data.type === 'sandbox-log') {
         setOutput(prev => [...prev, event.data.data]);
       } else if (event.data.type === 'sandbox-error') {
-        setOutput(prev => [...prev, `Error: ${event.data.data}`]);
+        const errorMsg = event.data.data;
+        setOutput(prev => [...prev, `Error: ${errorMsg}`]);
+        
+        // Pipe the error to chat so AI can address it immediately
+        if (handleSendInternal && lastErrorSentRef.current !== errorMsg) {
+          lastErrorSentRef.current = errorMsg;
+          handleSendInternal(
+            `I see the following in console output \` Console Output\n[1]Error: ${errorMsg}\``, 
+            undefined, 
+            "user", 
+            false
+          );
+        }
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [handleSendInternal]);
 
   useEffect(() => {
     if (files.length > 0) runCode();
@@ -124,6 +192,15 @@ export function Sandbox({ files }: SandboxProps) {
               Preview
             </Button>
             <Button 
+              variant={viewMode === "split" ? "secondary" : "ghost"} 
+              size="sm" 
+              className="h-6 px-2 text-[10px] gap-1.5"
+              onClick={() => setViewMode("split")}
+            >
+              <FileCode className="w-3 h-3" />
+              Split
+            </Button>
+            <Button 
               variant={viewMode === "code" ? "secondary" : "ghost"} 
               size="sm" 
               className="h-6 px-2 text-[10px] gap-1.5"
@@ -138,7 +215,14 @@ export function Sandbox({ files }: SandboxProps) {
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={runCode} title="Run Code">
             <Play className="w-3 h-3 text-green-500" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => iframeRef.current && (iframeRef.current.srcdoc = '')} title="Reset">
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => {
+            if (iframeRef.current) {
+              if (iframeRef.current.src && iframeRef.current.src.startsWith('blob:')) {
+                URL.revokeObjectURL(iframeRef.current.src);
+              }
+              iframeRef.current.src = '';
+            }
+          }} title="Reset">
             <RotateCcw className="w-3 h-3 text-zinc-500" />
           </Button>
         </div>
@@ -171,9 +255,9 @@ export function Sandbox({ files }: SandboxProps) {
         </div>
 
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-black/20">
-          {viewMode === "preview" ? (
-            <div className="flex-1 flex flex-col overflow-hidden">
+        <div className={`flex-1 flex ${viewMode === "split" ? "flex-row" : "flex-col"} overflow-hidden bg-black/20`}>
+          {(viewMode === "preview" || viewMode === "split") && (
+            <div className={`flex flex-col overflow-hidden ${viewMode === "split" ? "w-1/2 border-r border-zinc-800" : "flex-1"}`}>
               <div className="flex-1 bg-white relative">
                 <iframe
                   ref={iframeRef}
@@ -197,8 +281,10 @@ export function Sandbox({ files }: SandboxProps) {
                 </div>
               )}
             </div>
-          ) : (
-            <div className="flex-1 flex flex-col overflow-hidden">
+          )}
+
+          {(viewMode === "code" || viewMode === "split") && (
+            <div className={`flex flex-col overflow-hidden ${viewMode === "split" ? "w-1/2" : "flex-1"}`}>
               <div className="p-2 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between">
                 <span className="text-[10px] font-mono text-zinc-400">{activeFile?.name}</span>
                 <span className="text-[9px] text-zinc-600 uppercase tracking-widest">{activeFile?.language}</span>
