@@ -45,6 +45,12 @@ interface AppContextType {
   setThinkEnabled: (val: boolean) => void;
   enableMMRS: boolean;
   setEnableMMRS: (val: boolean) => void;
+  mmrsModel: "text" | "image" | "music";
+  setMmrsModel: (val: "text" | "image" | "music") => void;
+  mmrsMode: "operational" | "bob" | "duality" | "polarity";
+  setMmrsMode: (val: "operational" | "bob" | "duality" | "polarity") => void;
+  inactivityTimeout: number;
+  setInactivityTimeout: (val: number) => void;
   relayActive: boolean;
   isApiServerActive: boolean;
   startRelayServer: () => Promise<void>;

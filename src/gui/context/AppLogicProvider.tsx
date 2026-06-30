@@ -56,6 +56,12 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setThinkEnabled,
     enableMMRS,
     setEnableMMRS,
+    mmrsModel,
+    setMmrsModel,
+    mmrsMode,
+    setMmrsMode,
+    inactivityTimeout,
+    setInactivityTimeout,
   } = useSettings();
 
   // --- State ---
@@ -76,6 +82,12 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
 
   const [focusTopics, setFocusTopics] = useState<FocusTopic[]>([]);
   const [emotionalState, setEmotionalState] = useState<EmotionalState>("Focused");
+
+  useEffect(() => {
+    if (browserEngine) {
+      browserEngine.setIdleTimeout(inactivityTimeout);
+    }
+  }, [inactivityTimeout]);
 
   // --- Focus Topics and Emotional State Helpers & Effects ---
 
@@ -497,6 +509,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
           return msg;
         });
       });
+    } else {
+      tts.init().catch(console.error);
     }
   }, [speakEnabled, setMessages]);
   const speechQueueRef = useRef<string[]>([]);
@@ -680,6 +694,15 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     speakEnabled
   );
 
+  const [currentStepIndex, setCurrentStepIndex] = useState(-1);
+
+  const {
+    isPipelineRunning,
+    startPipeline,
+    stopPipeline,
+    workflow
+  } = usePipelineGeneration(addLog, setSandboxFiles, setSelectedModels, currentStepIndex, setCurrentStepIndex);
+
   const {
     input,
     setInput,
@@ -735,19 +758,15 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     temperature,
     topP,
     topK,
+    sandboxFiles,
     setSandboxFiles,
+    currentStepIndex,
+    setCurrentStepIndex,
     enableMMRS,
     feedSpeechToken,
-    flushSpeech
+    flushSpeech,
+    speakEnabled
   );
-
-  const {
-    currentStepIndex,
-    isPipelineRunning,
-    startPipeline,
-    stopPipeline,
-    workflow
-  } = usePipelineGeneration(addLog, setSandboxFiles, setSelectedModels);
 
   // Reset error when mode changes explicitly
   useEffect(() => {
@@ -964,6 +983,9 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     emotionalState, setEmotionalState,
     thinkEnabled, setThinkEnabled,
     enableMMRS, setEnableMMRS,
+    mmrsModel, setMmrsModel,
+    mmrsMode, setMmrsMode,
+    inactivityTimeout, setInactivityTimeout,
     chatTabs, activeTabId, selectTab, openNewTab, closeTab, renameTab,
     relayActive, isApiServerActive, startRelayServer, launchApiServer, shutdownApiServer,
     isModelLoading, isModelReady, loadingProgress, loadedModelId,

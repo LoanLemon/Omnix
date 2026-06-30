@@ -24,6 +24,7 @@ export interface SandboxFile {
 
 export interface Message {
   id?: string;
+  category?: string;
   role: "user" | "assistant" | "system";
   content: string;
   spokenContent?: string;

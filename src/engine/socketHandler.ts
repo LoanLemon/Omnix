@@ -2,6 +2,7 @@ import { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import path from "path";
+import { stringify as masonStringify } from "mason-parser";
 
 interface PendingAuth {
   resolve: (allowed: boolean) => void;
@@ -320,7 +321,7 @@ export async function dispatchTask(category: string, input: any, options: any = 
 
   if (category === "text" || category === "vision") {
     const history = reqIdChatHistories.get(reqId) || [];
-    const chatHistory = [...history, { role: "user" as const, content: category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : JSON.stringify(input)) }];
+    const chatHistory = [...history, { role: "user" as const, content: category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : masonStringify(input, 0, undefined, { compact: true })) }];
     options.chatHistory = chatHistory;
     console.log(`💬 Injected ${history.length} isolation history nodes for reqId: ${reqId}`);
   }
@@ -431,12 +432,12 @@ export async function dispatchTask(category: string, input: any, options: any = 
         clearTimeout(queueTimeout); 
         if (reqId && (category === "text" || category === "vision")) {
           const history = reqIdChatHistories.get(reqId) || [];
-          const userContent = category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : JSON.stringify(input));
+          const userContent = category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : masonStringify(input, 0, undefined, { compact: true }));
           let assistantContent = "";
           if (typeof data === "string") {
             assistantContent = data;
           } else if (data && typeof data === "object") {
-            assistantContent = data.response || JSON.stringify(data);
+            assistantContent = data.response || masonStringify(data, 0, undefined, { compact: true });
           }
           history.push({ role: "user", content: userContent });
           history.push({ role: "assistant", content: assistantContent });

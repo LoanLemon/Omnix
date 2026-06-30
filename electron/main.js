@@ -12,6 +12,8 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-unsafe-webgpu');
 app.commandLine.appendSwitch('enable-dawn-features', 'allow_unsafe_apis');
 app.commandLine.appendSwitch('enable-features', 'WebGPUService,WebAssemblySimd,WebAssemblyThreads');
+app.commandLine.appendSwitch('js-flags', '--max-wasm-memory=16384');
+app.commandLine.appendSwitch('enable-webgpu-developer-features');
 
 // Handling ESM directory names
 const __filename = fileURLToPath(import.meta.url);

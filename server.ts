@@ -7,6 +7,7 @@ import multer from "multer";
 import { createServer } from "http";
 import open from "open";
 import { setupWebSockets, dispatchTask, handleHealthCheck, archiveReqIdHistory, purgeReqIdHistory } from "./src/engine/socketHandler.ts";
+import { MODELS } from "./src/shared/modelList.ts";
 
 process.on('uncaughtException', (err) => {
   console.error('💥 Uncaught Exception:', err);
@@ -145,6 +146,11 @@ async function startServer() {
     }
   });
 
+  // List supported models
+  app.get("/api/listModels", (req, res) => {
+    res.json(MODELS);
+  });
+
   // --- 2. PID MONITORING ---
   if (dependentPid && !isNaN(dependentPid)) {
     console.log(`Omnix: Monitoring parent process PID ${dependentPid}`);
@@ -165,12 +171,38 @@ async function startServer() {
   // Text Generation
   app.post("/api/text", async (req, res) => {
     try {
-      const { prompt, systemPrompt, modelId, temperature, top_p, maxTokens } = req.body;
+      let prompt = req.body.prompt;
+      let systemPrompt = req.body.systemPrompt;
+      let modelId = req.body.modelId;
+      let qtype = req.body.qtype || "q4fp16";
+      let temperature = req.body.temperature;
+      let top_p = req.body.top_p;
+      let top_k = req.body.top_k;
+      let maxTokens = req.body.maxTokens;
+
+      if (req.body.model && typeof req.body.model === "object") {
+        modelId = req.body.model.id || modelId;
+        qtype = req.body.model.qtype || qtype;
+        temperature = req.body.model.temperature ?? temperature;
+        top_p = req.body.model.top_p ?? top_p;
+        top_k = req.body.model.top_k ?? top_k;
+        maxTokens = req.body.model.maxTokens ?? maxTokens;
+      }
+
+      if (qtype === "q4fp16") {
+        qtype = "q4f16";
+      }
+
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
       const origin = req.headers.origin || req.headers.referer || "unknown";
       const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
-      const output = await dispatchTask("text", prompt, { systemPrompt, modelId, origin, reqId, temperature, top_p, maxTokens });
+      
+      console.log(`\n🚀 [API] Processing Text Request [reqId: ${reqId || 'none'}]`);
+      console.log(`   - Model: ${modelId || 'auto-selected (default)'}`);
+      console.log(`   - Origin: ${origin}`);
+      
+      const output = await dispatchTask("text", prompt, { systemPrompt, modelId, qtype, origin, reqId, temperature, top_p, top_k, maxTokens });
       
       let cleanResponse = output;
       let thinkText: string | undefined = undefined;
@@ -209,6 +241,10 @@ async function startServer() {
 
       const origin = req.headers.origin || req.headers.referer || "unknown";
       const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
+      
+      console.log(`\n🚀 [API] Processing Director Request [reqId: ${reqId || 'none'}]`);
+      console.log(`   - Origin: ${origin}`);
+      
       const intent = await dispatchTask("director", prompt, { origin, reqId });
       res.json({ intent, prompt });
     } catch (error: any) {
@@ -239,14 +275,39 @@ async function startServer() {
   // Vision Analysis
   app.post("/api/vision", upload.single("image"), async (req: any, res) => {
     try {
-      const { prompt, modelId } = req.body;
+      let prompt = req.body.prompt;
+      let modelId = req.body.modelId;
+      let qtype = req.body.qtype || "q4fp16";
+      let temperature = req.body.temperature;
+      let top_p = req.body.top_p;
+      let top_k = req.body.top_k;
+      let maxTokens = req.body.maxTokens;
+
+      if (req.body.model && typeof req.body.model === "object") {
+        modelId = req.body.model.id || modelId;
+        qtype = req.body.model.qtype || qtype;
+        temperature = req.body.model.temperature ?? temperature;
+        top_p = req.body.model.top_p ?? top_p;
+        top_k = req.body.model.top_k ?? top_k;
+        maxTokens = req.body.model.maxTokens ?? maxTokens;
+      }
+
+      if (qtype === "q4fp16") {
+        qtype = "q4f16";
+      }
+
       const file = req.file;
       if (!file) return res.status(400).json({ error: "Image is required" });
 
       const origin = req.headers.origin || req.headers.referer || "unknown";
       const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
+      
+      console.log(`\n🚀 [API] Processing Vision Request [reqId: ${reqId || 'none'}]`);
+      console.log(`   - Model: ${modelId || 'auto-selected (default)'}`);
+      console.log(`   - Origin: ${origin}`);
+      
       const base64Image = `data:image/jpeg;base64,${file.buffer.toString('base64')}`;
-      const response = await dispatchTask("vision", base64Image, { prompt, modelId, origin, reqId });
+      const response = await dispatchTask("vision", base64Image, { prompt, modelId, qtype, origin, reqId, temperature, top_p, top_k, maxTokens });
 
       let cleanResponse = response;
       let thinkText: string | undefined = undefined;
@@ -285,6 +346,11 @@ async function startServer() {
       
       const origin = req.headers.origin || req.headers.referer || "unknown";
       const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
+      
+      console.log(`\n🚀 [API] Processing STT Request [reqId: ${reqId || 'none'}]`);
+      console.log(`   - Model: auto-selected (default stt)`);
+      console.log(`   - Origin: ${origin}`);
+      
       const base64Audio = file.buffer.toString('base64');
       const text = await dispatchTask("stt", base64Audio, { origin, reqId });
 
@@ -305,6 +371,10 @@ async function startServer() {
       
       const selectedVoice = voiceID || voiceId || modelId || "af_heart";
 
+      console.log(`\n🚀 [API] Processing TTS Request [reqId: ${reqId || 'none'}]`);
+      console.log(`   - Voice Model: ${selectedVoice}`);
+      console.log(`   - Origin: ${origin}`);
+
       const output = await dispatchTask("tts", text, { voiceID: selectedVoice, origin, reqId });
       res.json(output);
     } catch (error: any) {
@@ -315,12 +385,29 @@ async function startServer() {
   // Image Generation
   app.post("/api/image", async (req, res) => {
     try {
-      const { prompt, modelId } = req.body;
+      let prompt = req.body.prompt;
+      let modelId = req.body.modelId;
+      let qtype = req.body.qtype || "q4fp16";
+
+      if (req.body.model && typeof req.body.model === "object") {
+        modelId = req.body.model.id || modelId;
+        qtype = req.body.model.qtype || qtype;
+      }
+
+      if (qtype === "q4fp16") {
+        qtype = "q4f16";
+      }
+
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
       const origin = req.headers.origin || req.headers.referer || "unknown";
       const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
-      const image = await dispatchTask("image-gen", prompt, { modelId, origin, reqId });
+      
+      console.log(`\n🚀 [API] Processing Image Gen Request [reqId: ${reqId || 'none'}]`);
+      console.log(`   - Model: ${modelId || 'auto-selected (default)'}`);
+      console.log(`   - Origin: ${origin}`);
+      
+      const image = await dispatchTask("image-gen", prompt, { modelId, qtype, origin, reqId });
       res.json({ status: "success", image });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -330,12 +417,31 @@ async function startServer() {
   // Music Generation
   app.post("/api/music", async (req, res) => {
     try {
-      const { prompt, modelId } = req.body;
+      let prompt = req.body.prompt;
+      let modelId = req.body.modelId;
+      let qtype = req.body.qtype || "q4fp16";
+      let maxTokens = req.body.maxTokens;
+
+      if (req.body.model && typeof req.body.model === "object") {
+        modelId = req.body.model.id || modelId;
+        qtype = req.body.model.qtype || qtype;
+        maxTokens = req.body.model.maxTokens ?? maxTokens;
+      }
+
+      if (qtype === "q4fp16") {
+        qtype = "q4f16";
+      }
+
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
       const origin = req.headers.origin || req.headers.referer || "unknown";
       const reqId = req.body?.reqId || req.query?.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
-      const output = await dispatchTask("music-gen", prompt, { modelId, origin, reqId });
+      
+      console.log(`\n🚀 [API] Processing Music Gen Request [reqId: ${reqId || 'none'}]`);
+      console.log(`   - Model: ${modelId || 'auto-selected (default)'}`);
+      console.log(`   - Origin: ${origin}`);
+      
+      const output = await dispatchTask("music-gen", prompt, { modelId, qtype, origin, reqId, maxTokens });
       res.json({ status: "success", ...output });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

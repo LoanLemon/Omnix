@@ -374,6 +374,7 @@ export class WorkerModelEngine {
       } else {
         let task: any = "text-generation";
         if (category === "vision") task = "image-to-text";
+        if (info.id.toLowerCase().includes("fara")) task = "image-text-to-text";
         this.pipeline = await pipeline(task, info.modelID, options);
       }
     };
@@ -391,6 +392,7 @@ export class WorkerModelEngine {
         errMsg.includes("7503920") || 
         errMsg.includes("Aborted") || 
         errMsg.includes("OOM") ||
+        errMsg.includes("bad_alloc") ||
         errMsg.includes("Unexpected internal error");
 
       const isDeviceWebGPU = typeof commonOptions.device === "string" 
@@ -465,7 +467,7 @@ export class WorkerModelEngine {
         modelId = resolved.id;
         options.modelId = resolved.id;
       }
-      await this.loadModel(category, modelId, sendProgress);
+      await this.loadModel(category, modelId, sendProgress, options.qtype);
 
       let parsedMaxTokens: number | undefined;
       const rawMaxTokens = options.maxTokens !== undefined ? options.maxTokens : options.max_new_tokens;
@@ -534,6 +536,10 @@ export class WorkerModelEngine {
   }
 
   private getDefaultModel(category: string) {
+    if (category === "text") {
+      const gemma = MODELS.find(m => m.id === "gemma-3 1B" && m.category === "text");
+      if (gemma) return gemma.id;
+    }
     const found = MODELS.find(m => m.category === category);
     return found ? found.id : "";
   }
@@ -635,7 +641,24 @@ self.addEventListener("message", async (e: MessageEvent) => {
     }
   } catch (err: any) {
     console.error(`Worker error executing command ${type}:`, err);
-    self.postMessage({ type: "error", requestId, error: err.message || String(err) });
+    
+    // Graceful recovery for aborted WebGPU generation due to model swap or destruction
+    const msg = String(err);
+    if (msg.includes("destroy") || msg.includes("disposed") || msg.includes("session")) {
+       if (type === "runDirectorInference") {
+          self.postMessage({ 
+            type: "complete", 
+            requestId, 
+            result: { category: "text", prompt: payload?.input || "", thinking: "Task interrupted by model swap." } 
+          });
+          return;
+       } else if (type === "runInference") {
+          self.postMessage({ type: "complete", requestId, result: "Inference interrupted by model change." });
+          return;
+       }
+    }
+
+    self.postMessage({ type: "error", requestId, error: err.message || msg });
   }
 });
 

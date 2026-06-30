@@ -39,7 +39,10 @@ export function Header({
     openNewTab,
     chatTabs,
     activeTabId,
-    renameTab
+    renameTab,
+    enableMMRS,
+    mmrsModel,
+    setMmrsModel
   } = useApp();
 
   const [isApiGuideOpen, setIsApiGuideOpen] = useState(false);
@@ -141,7 +144,7 @@ export function Header({
                 <SelectItem value="sandbox" className="focus:bg-green-500/10 focus:text-green-500">
                   <div className="flex items-center gap-2">
                     <Code2 className="w-3 h-3" />
-                    Coder
+                    Sandbox
                   </div>
                 </SelectItem>
                 <SelectItem value="live" className="focus:bg-red-500/10 focus:text-red-500">
@@ -153,6 +156,37 @@ export function Header({
               </SelectContent>
             </Select>
           </div>
+
+          {enableMMRS && (
+            <div className="flex flex-col items-end">
+              <span className="text-[8px] font-mono text-muted-foreground uppercase tracking-widest mb-0.5 opacity-50">MMRS Model</span>
+              <Select value={mmrsModel} onValueChange={(val) => setMmrsModel(val as any)}>
+                <SelectTrigger className="h-7 w-28 bg-muted/30 border-border text-[10px] text-foreground font-mono focus:ring-orange-500/30 hover:border-orange-500/30 transition-all rounded-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border border-border/50 text-popover-foreground text-[10px] font-mono shadow-md">
+                  <SelectItem value="text" className="focus:bg-blue-500/10 focus:text-blue-500">
+                    <div className="flex items-center gap-2">
+                      <Bot className="w-3 h-3" />
+                      Text
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="image" className="focus:bg-purple-500/10 focus:text-purple-500">
+                    <div className="flex items-center gap-2">
+                      <ImageIcon className="w-3 h-3" />
+                      Image
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="music" className="focus:bg-pink-500/10 focus:text-pink-500">
+                    <div className="flex items-center gap-2">
+                      <Music className="w-3 h-3" />
+                      Music
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="flex flex-col items-end">
             <span className="text-[8px] font-mono text-muted-foreground uppercase tracking-widest mb-0.5 opacity-50">Cognitive State</span>

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Terminal, Code2, Globe, Zap, Image as ImageIcon, Music, Bot, Mic, Volume2, Activity } from "lucide-react";
@@ -12,6 +12,7 @@ interface ApiGuideModalProps {
 
 export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
   const PORT = window.location.port || "9777";
+  const [activeTab, setActiveTab] = useState<"api" | "websocket">("api");
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -25,16 +26,40 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                   <Globe className="w-5 h-5 text-orange-500" />
                 </div>
                 <div>
-                  <DialogTitle className="text-2xl font-mono font-bold tracking-tight uppercase">Omnix Local API Guide</DialogTitle>
+                  <DialogTitle className="text-2xl font-mono font-bold tracking-tight uppercase">Omnix Developer Guide</DialogTitle>
                   <DialogDescription className="text-zinc-500 font-mono text-xs uppercase tracking-widest mt-1">
                     Headless Inference Engine • Localhost Access
                   </DialogDescription>
                 </div>
               </div>
             </DialogHeader>
-            <div className="mt-4 p-3 bg-zinc-950/50 border border-zinc-800 rounded-md font-mono text-xs flex items-center gap-2">
-              <span className="text-zinc-500">BASE URL:</span>
-              <code className="text-orange-500 select-all">http://localhost:{PORT}/api</code>
+            <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex bg-zinc-950 border border-zinc-800 rounded-md p-1">
+                <button
+                  onClick={() => setActiveTab("api")}
+                  className={`px-4 py-1.5 text-xs font-mono rounded ${activeTab === "api" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200"}`}
+                >
+                  REST API
+                </button>
+                <button
+                  onClick={() => setActiveTab("websocket")}
+                  className={`px-4 py-1.5 text-xs font-mono rounded ${activeTab === "websocket" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200"}`}
+                >
+                  WebSocket
+                </button>
+              </div>
+              {activeTab === "api" && (
+                <div className="p-2 bg-zinc-950/50 border border-zinc-800 rounded-md font-mono text-xs flex items-center gap-2">
+                  <span className="text-zinc-500">BASE URL:</span>
+                  <code className="text-orange-500 select-all">http://localhost:{PORT}/api</code>
+                </div>
+              )}
+              {activeTab === "websocket" && (
+                <div className="p-2 bg-zinc-950/50 border border-zinc-800 rounded-md font-mono text-xs flex items-center gap-2">
+                  <span className="text-zinc-500">WS URL:</span>
+                  <code className="text-blue-500 select-all">ws://localhost:{PORT}/ws</code>
+                </div>
+              )}
             </div>
           </div>
 
@@ -43,8 +68,8 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
             <div className="w-56 border-r border-zinc-800 bg-zinc-900/20 hidden md:block">
               <ScrollArea className="h-full p-4">
                 <nav className="space-y-1">
-                  <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter mb-4">Endpoints</p>
-                  {['Text', 'Vision', 'Director', 'Image', 'Music', 'STT', 'TTS', 'Health Check', 'Domain Integration'].map(item => (
+                  <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter mb-4">{activeTab === "api" ? "Endpoints" : "WebSocket Docs"}</p>
+                  {activeTab === "api" ? ['List Models', 'Text', 'Vision', 'Director', 'Image', 'Music', 'STT', 'TTS', 'Health Check', 'Domain Integration'].map(item => (
                     <button 
                       key={item}
                       onClick={() => {
@@ -59,6 +84,21 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                       <span>{item}</span>
                       <span className="text-[10px] text-zinc-600 group-hover:text-orange-500 font-mono">→</span>
                     </button>
+                  )) : ['Connection', 'Streaming', 'Event Types'].map(item => (
+                    <button 
+                      key={item}
+                      onClick={() => {
+                        const sectionId = `ws-guide-${item.toLowerCase().replace(/\s+/g, "-")}`;
+                        const el = document.getElementById(sectionId);
+                        if (el) {
+                          el.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs font-mono text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded transition-colors flex items-center justify-between group"
+                    >
+                      <span>{item}</span>
+                      <span className="text-[10px] text-zinc-600 group-hover:text-blue-500 font-mono">→</span>
+                    </button>
                   ))}
                 </nav>
               </ScrollArea>
@@ -67,7 +107,67 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
             <ScrollArea className="flex-1 p-6 lg:p-10">
               <div className="max-w-5xl lg:max-w-6xl mx-auto space-y-16 pb-20">
                 
-                {/* Text Generation */}
+                {activeTab === "api" && (
+                  <>
+                    {/* List Models */}
+                <section id="api-guide-list-models" className="space-y-6 scroll-mt-6">
+                  <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded bg-zinc-500/10 flex items-center justify-center border border-zinc-500/20">
+                        <Terminal className="w-4 h-4 text-zinc-500" />
+                      </div>
+                      <h3 className="text-lg font-mono font-bold uppercase tracking-tight">List Models</h3>
+                    </div>
+                    <code className="px-2 py-1 bg-zinc-900 text-blue-400 border border-zinc-800 rounded text-[10px]">GET /api/listModels</code>
+                  </div>
+                  <p className="text-sm text-zinc-400 leading-relaxed">
+                    Retrieve a complete list of all locally supported and configurable models inside Omnix. Useful for dynamically discovering capabilities before task submission.
+                  </p>
+                  
+                  {/* Examples */}
+                  <div className="space-y-3">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Payload Examples</span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-wider pl-1">Request HTTP</span>
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-48 w-full">
+                          <pre className="text-zinc-300">
+{`GET /api/listModels HTTP/1.1
+Host: localhost`}
+                          </pre>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-wider pl-1">Response JSON (Truncated)</span>
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-48 overflow-y-auto w-full">
+                          <pre className="text-emerald-500">
+{`[
+  {
+    "id": "qwen-2.5-coder-3b-text",
+    "modelID": "onnx-community/Qwen2.5-Coder-3B-Instruct",
+    "name": "Qwen 2.5 Coder 3B",
+    "description": "Specialized for coding tasks.",
+    "size": "~2GB",
+    "dtype": "q4",
+    "qtypes": [
+      "q4f16",
+      "q4",
+      "fp16",
+      "fp32"
+    ],
+    "category": "text",
+    "make": "QWEN",
+    "minRam": 3
+  }
+]`}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                    {/* Text Generation */}
                 <section id="api-guide-text" className="space-y-6 scroll-mt-6">
                   <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
                     <div className="flex items-center gap-3">
@@ -102,9 +202,9 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                         <div className="col-span-6 text-zinc-500">Guiding rules or custom system-level persona for the response.</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">modelId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Target a specific loaded text model. If absent, reuse current or default model.</div>
+                        <div className="col-span-3 text-orange-500">model</div>
+                        <div className="col-span-3 text-zinc-400">object • Optional</div>
+                        <div className="col-span-6 text-zinc-500">Optional config object containing <code>id</code>, <code>qtype</code>, <code>temperature</code>, <code>top_p</code>, <code>top_k</code>, <code>maxTokens</code>. If absent, reuse current or default model.</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
                         <div className="col-span-3 text-orange-500">reqId</div>
@@ -120,19 +220,26 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-wider pl-1">Request JSON</span>
-                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-32 overflow-y-auto w-full">
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-48 overflow-y-auto w-full">
                           <pre className="text-zinc-300">
 {`{
   "prompt": "Write a poem...",
   "systemPrompt": "Expert poet",
-  "modelId": "gemma-2:2b-instruct"
+  "model": {
+    "id": "LemOneLabs/Llama-3.2-1B-Instruct-ONNX",
+    "qtype": "q4fp16",
+    "temperature": 0.5,
+    "top_p": 0.9,
+    "top_k": 0.5,
+    "maxTokens": 512
+  }
 }`}
                           </pre>
                         </div>
                       </div>
                       <div className="space-y-2">
                         <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-wider pl-1">Response JSON</span>
-                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-32 overflow-y-auto w-full">
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-48 overflow-y-auto w-full">
                           <pre className="text-emerald-500">
 {`{
   "response": "In silicon hearts...",
@@ -181,9 +288,9 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                         <div className="col-span-6 text-zinc-500">Visual query/question (defaults to image description).</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">modelId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Loaded vision model to target (e.g. fastvlm-1).</div>
+                        <div className="col-span-3 text-orange-500">model</div>
+                        <div className="col-span-3 text-zinc-400">string (JSON) • Optional</div>
+                        <div className="col-span-6 text-zinc-500">Optional config string containing <code>{"{\"id\": \"...\", \"qtype\": \"...\"}"}</code>.</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
                         <div className="col-span-3 text-orange-500">reqId</div>
@@ -205,7 +312,7 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                           <div className="pl-4 space-y-1">
                             <div><span className="text-orange-500">image</span>: <code className="text-zinc-400">[pixel_buffer.png]</code></div>
                             <div><span className="text-orange-500">prompt</span>: <code className="text-zinc-400">"What object is listed here?"</code></div>
-                            <div><span className="text-orange-500">modelId</span>: <code className="text-zinc-400">"paligemma-3b"</code></div>
+                            <div><span className="text-orange-500">model</span>: <code className="text-zinc-400">{"{\"id\": \"paligemma-3b\", \"qtype\": \"q4fp16\"}"}</code></div>
                           </div>
                         </div>
                       </div>
@@ -312,9 +419,9 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                         <div className="col-span-6 text-zinc-500">Description of image layout and artistic requirements.</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">modelId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Loaded image diffusion target to utilize (e.g. stable-diffusion-1.5).</div>
+                        <div className="col-span-3 text-orange-500">model</div>
+                        <div className="col-span-3 text-zinc-400">object • Optional</div>
+                        <div className="col-span-6 text-zinc-500">Optional config object containing <code>id</code> and <code>qtype</code>.</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
                         <div className="col-span-3 text-orange-500">reqId</div>
@@ -334,7 +441,10 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                           <pre className="text-zinc-300">
 {`{
   "prompt": "Futuristic cyberpunk terminal with soft holograms, 8k resolution",
-  "modelId": "imagen-3"
+  "model": {
+    "id": "imagen-3",
+    "qtype": "q4fp16"
+  }
 }`}
                           </pre>
                         </div>
@@ -384,9 +494,9 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                         <div className="col-span-6 text-zinc-500">Acoustic criteria (genre, feeling, speed, instruments).</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">modelId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Id of specific loaded music model inside workspace.</div>
+                        <div className="col-span-3 text-orange-500">model</div>
+                        <div className="col-span-3 text-zinc-400">object • Optional</div>
+                        <div className="col-span-6 text-zinc-500">Optional config object containing <code>id</code>, <code>qtype</code>, and <code>maxTokens</code>.</div>
                       </div>
                       <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
                         <div className="col-span-3 text-orange-500">reqId</div>
@@ -406,7 +516,11 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                           <pre className="text-zinc-300">
 {`{
   "prompt": "80s synthwave loop, high energy, fast tempo",
-  "modelId": "music-gen-default"
+  "model": {
+    "id": "music-gen-default",
+    "qtype": "q4fp16",
+    "maxTokens": 512
+  }
 }`}
                           </pre>
                         </div>
@@ -700,6 +814,123 @@ fetch("http://localhost:\${PORT}/api/text", {
      -d '{"prompt": "Sync brain."}'`}
                   </div>
                 </section>
+                  </>
+                )}
+
+                {activeTab === "websocket" && (
+                  <>
+                    <section id="ws-guide-connection" className="space-y-6 scroll-mt-6">
+                      <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
+                            <Globe className="w-4 h-4 text-blue-500" />
+                          </div>
+                          <h3 className="text-lg font-mono font-bold uppercase tracking-tight">Connection</h3>
+                        </div>
+                        <code className="px-2 py-1 bg-zinc-900 text-blue-400 border border-zinc-800 rounded text-[10px]">ws://localhost:{PORT}/ws</code>
+                      </div>
+                      <p className="text-sm text-zinc-400 leading-relaxed">
+                        Connect to the Omnix WebSocket server for real-time bi-directional streaming of text generation, images, and audio. Send JSON commands and receive streaming events.
+                      </p>
+                      
+                      <div className="space-y-3">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Connecting in JavaScript</span>
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] overflow-x-auto">
+                          <pre className="text-blue-300">
+{`const ws = new WebSocket("ws://localhost:${PORT}/ws");
+
+ws.onopen = () => {
+  console.log("Connected to Omnix WS");
+};`}
+                          </pre>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section id="ws-guide-streaming" className="space-y-6 scroll-mt-6">
+                      <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded bg-teal-500/10 flex items-center justify-center border border-teal-500/20">
+                            <Activity className="w-4 h-4 text-teal-500" />
+                          </div>
+                          <h3 className="text-lg font-mono font-bold uppercase tracking-tight">Streaming Generation</h3>
+                        </div>
+                      </div>
+                      <p className="text-sm text-zinc-400 leading-relaxed">
+                        To stream responses, emit an event containing your target endpoint and payload. The server will stream token chunks back as they are generated.
+                      </p>
+                      
+                      <div className="space-y-3">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Example: Requesting a Stream</span>
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] overflow-x-auto">
+                          <pre className="text-teal-300">
+{`// 1. Send the request
+ws.send(JSON.stringify({
+  type: "text_generation",
+  payload: {
+    prompt: "Write a short poem about stars",
+    reqId: "my-unique-req-123"
+  }
+}));
+
+// 2. Listen for streamed chunks
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  
+  if (data.type === "stream_chunk") {
+    // Process text stream
+    process.stdout.write(data.chunk);
+  }
+  
+  if (data.type === "stream_complete") {
+    console.log("\\n--- Generation Finished ---");
+  }
+};`}
+                          </pre>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section id="ws-guide-event-types" className="space-y-6 scroll-mt-6">
+                      <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
+                            <Code2 className="w-4 h-4 text-purple-500" />
+                          </div>
+                          <h3 className="text-lg font-mono font-bold uppercase tracking-tight">Event Types</h3>
+                        </div>
+                      </div>
+                      <p className="text-sm text-zinc-400 leading-relaxed">
+                        These are the common events returned by the WebSocket server during streaming and execution.
+                      </p>
+                      
+                      <div className="space-y-3">
+                        <div className="bg-zinc-950/70 border border-zinc-900 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
+                          <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
+                            <div className="col-span-3">Event Type</div>
+                            <div className="col-span-9">Payload Description</div>
+                          </div>
+                          <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
+                            <div className="col-span-3 text-orange-500">stream_chunk</div>
+                            <div className="col-span-9 text-zinc-500">Contains the <code>reqId</code> and <code>chunk</code> text for real-time text output.</div>
+                          </div>
+                          <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
+                            <div className="col-span-3 text-orange-500">think_chunk</div>
+                            <div className="col-span-9 text-zinc-500">Contains <code>reqId</code> and <code>chunk</code> text for the model's internal reasoning process.</div>
+                          </div>
+                          <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
+                            <div className="col-span-3 text-orange-500">stream_complete</div>
+                            <div className="col-span-9 text-zinc-500">Fired when the generation for a specific <code>reqId</code> finishes.</div>
+                          </div>
+                          <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
+                            <div className="col-span-3 text-orange-500">error</div>
+                            <div className="col-span-9 text-zinc-500">Contains an <code>error</code> message string if execution fails.</div>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                  </>
+                )}
 
               </div>
             </ScrollArea>

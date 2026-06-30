@@ -1,0 +1,31 @@
+name: Build and Release Omnix
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers the workflow only when you push a tag starting with 'v' (e.g., v0.5.1)
+
+jobs:
+  release:
+    runs-on: windows-latest # Using Windows to build the .exe installer
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci # Performs a clean, automated install of your package-lock.json
+
+      - name: Compile and Build Frontend
+        run: npm run build # Ensures your Vite/TypeScript web assets are compiled first
+
+      - name: Build and Publish Electron Binary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automatically provided by GitHub to authorize the upload
+        run: npx electron-builder --win --publish always

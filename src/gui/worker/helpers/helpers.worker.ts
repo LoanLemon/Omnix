@@ -104,7 +104,7 @@ export async function checkShaderF16Support(): Promise<boolean> {
 export function compileChatTemplate(modelId: string, messages: any[], options?: any): string {
   const modelIdLower = String(modelId || "").toLowerCase();
   
-  if (modelIdLower.includes("qwen") || modelIdLower.includes("tiny-llm") || modelIdLower.includes("janus")) {
+  if (modelIdLower.includes("qwen") || modelIdLower.includes("tiny-llm") || modelIdLower.includes("janus") || modelIdLower.includes("fara")) {
     let chat = "";
     messages.forEach((msg) => {
       const role = msg.role === "model" ? "assistant" : msg.role;

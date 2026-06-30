@@ -32,7 +32,7 @@ Omnix includes an advanced **Multi-Model Routing & Scheduling (MMRS)** engine de
 
 ---
 
-## Local API Guide
+## Omnix Developer Guide
 
 Omnix provides a local API running on `http://localhost:9777/api`.
 
@@ -44,14 +44,17 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   {
     "prompt": "string (Required)",
     "systemPrompt": "string (Optional)",
-    "modelId": "string (Optional)",
-    "reqId": "string (Optional)",
-    "temperature": "number (Optional)",
-    "top_p": "number (Optional)",
-    "maxTokens": "number (Optional)"
+    "model": {
+      "id": "string (Optional)",
+      "qtype": "string (Optional) defaults to q4fp16",
+      "temperature": "number (Optional)",
+      "top_p": "number (Optional)",
+      "top_k": "number (Optional)",
+      "maxTokens": "number (Optional)"
+    }
   }
   ```
-  - **modelId**: Targets a specific loaded text model (e.g., `gemma-2-2b-instruct`). If absent, reuse current or default model.
+  - **model.id**: Targets a specific loaded text model (e.g., `gemma-2-2b-instruct`). If absent, reuse current or default model.
   - **reqId**: Unique tracking key for task correlation, isolated conversation history logs, and streaming updates. Can also be supplied via URL query parameter `?reqId=...` or headers `x-req-id` / `reqid`.
 - **Response**:
   ```json
@@ -65,7 +68,13 @@ Omnix provides a local API running on `http://localhost:9777/api`.
 - **Body**: `multipart/form-data`
   - `image`: File (Binary - Required)
   - `prompt`: string (Optional)
-  - `modelId`: string (Optional)
+  - `model`: JSON string of model object (Optional)
+    - `id`: string (Optional)
+    - `qtype`: string (Optional) defaults to q4fp16
+    - `temperature`: number (Optional)
+    - `top_p`: number (Optional)
+    - `top_k`: number (Optional)
+    - `maxTokens`: number (Optional)
   - `reqId`: string (Optional - can also be passed via URL query or headers)
 - **Response**:
   ```json
@@ -96,7 +105,10 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   ```json
   {
     "prompt": "string (Required)",
-    "modelId": "string (Optional)",
+    "model": {
+      "id": "string (Optional)",
+      "qtype": "string (Optional) defaults to q4fp16"
+    },
     "reqId": "string (Optional)"
   }
   ```
@@ -113,7 +125,11 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   ```json
   {
     "prompt": "string (Required)",
-    "modelId": "string (Optional)",
+    "model": {
+      "id": "string (Optional)",
+      "qtype": "string (Optional) defaults to q4fp16",
+      "maxTokens": "number (Optional)"
+    },
     "reqId": "string (Optional)"
   }
   ```
@@ -175,7 +191,12 @@ Omnix provides a local API running on `http://localhost:9777/api`.
 ```bash
 curl -X POST http://localhost:9777/api/text \
      -H "Content-Type: application/json" \
-     -d '{"prompt": "Hello Omnix!", "temperature": 0.7}'
+     -d '{
+           "prompt": "Hello Omnix!",
+           "model": {
+             "temperature": 0.7
+           }
+         }'
 ```
 
 ---

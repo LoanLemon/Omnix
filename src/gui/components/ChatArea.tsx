@@ -38,7 +38,9 @@ import {
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import { useApp } from "@/context/AppContext";
+import { parseMarkdownToolCalls } from "@/lib/parseMarkdownToolCalls";
 import { tts } from "@/lib/tts";
+import { InputDock } from "./chat/InputDock";
 
 interface ChatAreaProps {
   handleSend: () => void;
@@ -110,7 +112,24 @@ export function ChatArea({
     renameTab,
     livePermissionError,
     setLivePermissionError,
+    enableMMRS,
+    mmrsMode,
+    setMmrsMode,
   } = useApp();
+
+  const handleMmrsModeToggle = () => {
+    const modes: ("operational" | "bob" | "duality" | "polarity")[] = ["operational", "bob", "duality", "polarity"];
+    const currentIndex = modes.indexOf(mmrsMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    setMmrsMode(modes[nextIndex]);
+  };
+
+  const mmrsModeLabels = {
+    "operational": "Operational Mode",
+    "bob": "Best Of Both (Bob)",
+    "duality": "Duality",
+    "polarity": "Polarity"
+  };
 
   const handleExportTab = (tab: any) => {
     const dataStr =
@@ -320,6 +339,29 @@ export function ChatArea({
         </div>
       </div>
 
+      {enableMMRS && !isCoderMode && (
+        <div className="border-b border-border/30 bg-muted/10 backdrop-blur-md shrink-0 transition-all duration-300">
+          <div className="max-w-2xl mx-auto px-6 py-2 flex flex-col items-center justify-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleMmrsModeToggle}
+              className="text-[10px] font-mono h-6 bg-zinc-900/50 border-orange-500/30 text-orange-500 hover:bg-orange-500/10 transition-colors flex items-center gap-2 rounded-full px-4"
+              title="Toggle MMRS Interaction Mode"
+            >
+              <Activity className="w-3 h-3" />
+              <span>MMRS MODE: {mmrsModeLabels[mmrsMode]}</span>
+            </Button>
+            <span className="text-[9px] font-mono text-muted-foreground/60 max-w-[80%] text-center leading-tight">
+              {mmrsMode === "operational" && "Uses Operational Mode model and only uses the MMRS to generate images/music"}
+              {mmrsMode === "bob" && "Prompts both models, then asks both models to pick their favorite response. Retries until consensus."}
+              {mmrsMode === "duality" && "Prompts Operational Model, then allows MMRS model to also include their response"}
+              {mmrsMode === "polarity" && "Prompts Operational Model, then MMRS model provides a dissenting or opposing response"}
+            </span>
+          </div>
+        </div>
+      )}
+
       {livePermissionError && (
         <div className="mx-6 mt-4 p-4 rounded bg-red-950/35 border border-red-500/20 text-foreground relative z-10 animate-in fade-in duration-300">
           <div className="flex gap-3">
@@ -428,7 +470,7 @@ export function ChatArea({
                   </div>
                   <div className="space-y-1">
                     <h2 className="text-2xl font-mono font-bold tracking-tighter uppercase text-foreground">
-                      OMNIX_V0.6
+                      OMNIX
                     </h2>
                     <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-[0.3em] opacity-40">
                       Orchestration_Interface
@@ -606,83 +648,32 @@ export function ChatArea({
                               ? parsed.cleanContent
                               : msg.content;
 
+                            let hasValidToolCalls = false;
                             // Parse Coder Tool Calls
                             if (msg.role === "assistant") {
                               try {
-                                let cleanJSON = contentToRender.trim();
-                                const jsonMatch = cleanJSON.match(
-                                  /```(?:json)?\s*([\s\S]*?)\s*```/,
-                                );
-
-                                let extractedJSON = cleanJSON;
-                                let textBefore = "";
-                                let textAfter = "";
-
-                                if (jsonMatch) {
-                                  extractedJSON = jsonMatch[1].trim();
-                                  textBefore = cleanJSON
-                                    .substring(0, jsonMatch.index)
-                                    .trim();
-                                  textAfter = cleanJSON
-                                    .substring(
-                                      jsonMatch.index! + jsonMatch[0].length,
-                                    )
-                                    .trim();
-                                } else {
-                                  const firstBrace = cleanJSON.indexOf("{");
-                                  const lastBrace = cleanJSON.lastIndexOf("}");
-                                  if (
-                                    firstBrace !== -1 &&
-                                    lastBrace !== -1 &&
-                                    lastBrace > firstBrace
-                                  ) {
-                                    extractedJSON = cleanJSON.substring(
-                                      firstBrace,
-                                      lastBrace + 1,
-                                    );
-                                    textBefore = cleanJSON
-                                      .substring(0, firstBrace)
-                                      .trim();
-                                    textAfter = cleanJSON
-                                      .substring(lastBrace + 1)
-                                      .trim();
-                                  }
-                                }
-
-                                if (extractedJSON.startsWith("{")) {
-                                  let jsonObj;
-                                  try {
-                                    jsonObj = JSON.parse(extractedJSON);
-                                  } catch (e) {
-                                    extractedJSON = extractedJSON
-                                      .replace(/\\}/g, "}")
-                                      .replace(/\\{/g, "{")
-                                      .replace(/\\'/g, "'");
-                                    jsonObj = JSON.parse(extractedJSON);
-                                  }
-
-                                  if (jsonObj && jsonObj.tool) {
-                                    let extraText = [textBefore, textAfter]
-                                      .filter(Boolean)
-                                      .join("\n\n");
-
-                                    if (
-                                      jsonObj.tool === "chat_user" &&
-                                      jsonObj.params &&
-                                      jsonObj.params.message
-                                    ) {
-                                      contentToRender = jsonObj.params.message;
-                                    } else {
-                                      contentToRender =
-                                        "```json\n" +
-                                        JSON.stringify(jsonObj, null, 2) +
-                                        "\n```";
-                                    }
-                                  }
+                                const toolCalls = parseMarkdownToolCalls(contentToRender);
+                                if (toolCalls.length > 0) {
+                                    hasValidToolCalls = true;
+                                    contentToRender = toolCalls.map((t: any) => {
+                                        if (t.tool === "chat_user" && t.params && t.params.message) {
+                                            return t.params.message;
+                                        }
+                                        let s = `\`\`\`markdown\n# ${t.tool}\n`;
+                                        for (const [k, v] of Object.entries(t.params)) {
+                                            s += `\n## ${k}\n${v}\n`;
+                                        }
+                                        s += `\`\`\``;
+                                        return s;
+                                    }).join("\n\n");
                                 }
                               } catch (e) {
-                                // Not valid JSON, keep as is
+                                // Not valid tool calls, keep as is
                               }
+                            }
+
+                            if (msg.category === "coder" && msg.role === "assistant" && !hasValidToolCalls && contentToRender.trim() !== "") {
+                                contentToRender = `\`\`\`text\n${contentToRender}\n\`\`\``;
                             }
 
                             if (parsed) {
@@ -834,201 +825,12 @@ export function ChatArea({
       </div>
 
       {/* Input Area */}
-      <div className="p-6 border-t border-border bg-background/50 backdrop-blur-xl shrink-0">
-        <div className="max-w-2xl mx-auto relative">
-          {pendingImage && (
-            <div className="mb-3 relative inline-block">
-              <img
-                src={pendingImage}
-                className="h-20 w-20 object-cover rounded-lg border border-border"
-              />
-              <button
-                type="button"
-                onClick={() => setPendingImage(null)}
-                className="absolute -top-2 -right-2 bg-muted border border-border rounded-full p-1 text-muted-foreground hover:text-foreground shadow-xl"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          )}
-          <form
-            className="flex gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSend();
-            }}
-          >
-            <div className="relative flex-1">
-              <Input
-                placeholder={
-                  isModelReady
-                    ? "Command the studio..."
-                    : "Initializing engine..."
-                }
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                className="bg-muted border-border h-12 pl-4 pr-12 focus-visible:ring-orange-500/50 rounded-xl"
-              />
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className={`h-8 w-8 rounded-lg ${isRecording && !isLiveMode ? "text-red-500 bg-red-500/10 hover:bg-red-500/20" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
-                  onClick={toggleRecording}
-                  disabled={isLiveMode}
-                >
-                  {isRecording ? (
-                    <MicOff className="w-4 h-4 animate-pulse" />
-                  ) : (
-                    <Mic className="w-4 h-4" />
-                  )}
-                </Button>
-                <Button
-                  type="submit"
-                  size="icon"
-                  className="h-8 w-8 bg-orange-600 hover:bg-orange-500 text-white rounded-lg"
-                  disabled={!input.trim() && !pendingImage}
-                >
-                  <Send className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          </form>
-
-          <div className="flex items-center gap-4 mt-3 px-2">
-            <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-[10px] text-muted-foreground hover:text-orange-500 gap-1.5"
-                onClick={() =>
-                  (
-                    document.getElementById("vision-upload") as HTMLInputElement
-                  )?.click()
-                }
-              >
-                <ImageIcon className="w-3 h-3" />
-                Vision
-              </Button>
-              <input
-                type="file"
-                id="vision-upload"
-                className="hidden"
-                accept="image/*"
-                onChange={(e) =>
-                  e.target.files?.[0] && analyzeImage(e.target.files[0])
-                }
-              />
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className={`h-7 text-[10px] gap-1.5 ${isLiveMode ? "text-red-500 hover:text-red-400 bg-red-500/10" : "text-muted-foreground hover:text-orange-500"}`}
-                onClick={toggleLiveMode}
-                title="Toggle Live Mode (Screen + Voice)"
-              >
-                <Monitor
-                  className={`w-3 h-3 ${isLiveMode ? "animate-pulse" : ""}`}
-                />
-                Live
-              </Button>
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className={`h-7 text-[10px] gap-1.5 ${speakEnabled ? "text-orange-500 bg-orange-500/10 hover:bg-orange-500/20" : "text-muted-foreground hover:text-orange-500"}`}
-                title={
-                  speakEnabled
-                    ? "Disable Speak Responses (TTS)"
-                    : "Enable Speak Responses (TTS)"
-                }
-                onClick={() => {
-                  const nextVal = !speakEnabled;
-                  setSpeakEnabled(nextVal);
-                  if (nextVal) {
-                    tts.resume();
-                  } else {
-                    tts.stop();
-                  }
-                }}
-              >
-                <Volume2 className="w-3 h-3" />
-                Speak
-              </Button>
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-[10px] text-muted-foreground hover:text-orange-500 gap-1.5"
-                onClick={() =>
-                  handleToolCall({
-                    tool: "image_gen",
-                    params: { prompt: input },
-                  })
-                }
-                disabled={!input.trim()}
-              >
-                <Sparkles className="w-3 h-3" />
-                Generate
-              </Button>
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-[10px] text-muted-foreground hover:text-orange-500 gap-1.5"
-                onClick={() => handleMusicGen(input)}
-                disabled={!input.trim()}
-              >
-                <Music className="w-3 h-3" />
-                Music
-              </Button>
-
-              {isCoderMode && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={`h-7 text-[10px] gap-1.5 ${isPipelineRunning ? "text-orange-500 bg-orange-500/10" : "text-muted-foreground hover:text-orange-500"}`}
-                  onClick={() =>
-                    isPipelineRunning ? stopPipeline() : startPipeline(input)
-                  }
-                  disabled={!input.trim() && !isPipelineRunning}
-                >
-                  <Workflow
-                    className={`w-3 h-3 ${isPipelineRunning ? "animate-spin" : ""}`}
-                  />
-                  {isPipelineRunning ? "Abort Pipeline" : "Build Project"}
-                </Button>
-              )}
-            </div>
-            <Separator orientation="vertical" className="h-3 bg-border" />
-            <div className="flex gap-2">
-              {sandboxFiles.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={`h-7 text-[10px] gap-1.5 ${activeTab === "sandbox" ? "text-orange-500" : "text-muted-foreground"}`}
-                  onClick={() => setActiveTab("sandbox")}
-                >
-                  <Code2 className="w-3 h-3" />
-                  Sandbox
-                </Button>
-              )}
-              {generatedImage && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={`h-7 text-[10px] gap-1.5 ${activeTab === "gallery" ? "text-orange-500" : "text-muted-foreground"}`}
-                  onClick={() => setActiveTab("gallery")}
-                >
-                  <Layout className="w-3 h-3" />
-                  Gallery
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <InputDock
+        handleSend={handleSend}
+        analyzeImage={analyzeImage}
+        handleToolCall={handleToolCall}
+        handleMusicGen={handleMusicGen}
+      />
     </main>
   );
 }

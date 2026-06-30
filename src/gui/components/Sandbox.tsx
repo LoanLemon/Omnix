@@ -71,15 +71,44 @@ export function Sandbox({ files }: SandboxProps) {
             originalLog(...args);
           };
           window.onerror = (msg, url, line, col, error) => {
-            window.parent.postMessage({ type: 'sandbox-error', data: msg }, '*');
+            const errorStr = (error && error.stack) ? error.stack : (msg + (line ? ' (Line ' + line + (col ? ':' + col : '') + ')' : ''));
+            window.parent.postMessage({ type: 'sandbox-error', data: errorStr }, '*');
             return false;
           };
+          window.addEventListener('unhandledrejection', (event) => {
+            const reason = event.reason;
+            const errorStr = reason ? (reason.stack || reason.message || String(reason)) : 'Unhandled Promise Rejection';
+            window.parent.postMessage({ type: 'sandbox-error', data: 'Unhandled Rejection: ' + errorStr }, '*');
+          });
         </script>
       `;
       srcDoc = srcDoc.replace('<head>', `<head>${logScript}`);
       if (!srcDoc.includes('<head>')) srcDoc = logScript + srcDoc;
     } else {
       // For TypeScript/React, we inject Babel standalone and an import map for basic dependencies
+      let importMap = {
+        imports: {
+          "react": "https://esm.sh/react@18",
+          "react-dom/client": "https://esm.sh/react-dom@18/client",
+          "lucide-react": "https://esm.sh/lucide-react"
+        } as Record<string, string>
+      };
+
+      const packageJsonFile = files.find(f => f.name.toLowerCase() === 'package.json');
+      if (packageJsonFile) {
+        try {
+          const pkg = JSON.parse(packageJsonFile.content);
+          const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+          for (const [dep, version] of Object.entries(deps)) {
+            if (dep !== 'react' && dep !== 'react-dom/client' && dep !== 'lucide-react') {
+              importMap.imports[dep] = `https://esm.sh/${dep}@${(version as string).replace(/[\^~]/g, '')}`;
+            }
+          }
+        } catch (e) {
+          console.error("Failed to parse package.json in Sandbox", e);
+        }
+      }
+
       srcDoc = `
         <!DOCTYPE html>
         <html>
@@ -96,13 +125,7 @@ export function Sandbox({ files }: SandboxProps) {
             </style>
             <!-- Import map for common dependencies -->
             <script type="importmap">
-              {
-                "imports": {
-                  "react": "https://esm.sh/react@18",
-                  "react-dom/client": "https://esm.sh/react-dom@18/client",
-                  "lucide-react": "https://esm.sh/lucide-react"
-                }
-              }
+              ${JSON.stringify(importMap, null, 2)}
             </script>
             <!-- Babel for in-browser transpilation of TypeScript/React -->
             <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -116,15 +139,21 @@ export function Sandbox({ files }: SandboxProps) {
                 originalLog(...args);
               };
               window.onerror = (msg, url, line, col, error) => {
-                window.parent.postMessage({ type: 'sandbox-error', data: msg }, '*');
+                const errorStr = (error && error.stack) ? error.stack : (msg + (line ? ' (Line ' + line + (col ? ':' + col : '') + ')' : ''));
+                window.parent.postMessage({ type: 'sandbox-error', data: errorStr }, '*');
                 return false;
               };
+              window.addEventListener('unhandledrejection', (event) => {
+                const reason = event.reason;
+                const errorStr = reason ? (reason.stack || reason.message || String(reason)) : 'Unhandled Promise Rejection';
+                window.parent.postMessage({ type: 'sandbox-error', data: 'Unhandled Rejection: ' + errorStr }, '*');
+              });
             </script>
             <script type="text/babel" data-type="module" data-presets="env,react,typescript">
               try {
                 ${entryFile.content}
               } catch (e) {
-                window.parent.postMessage({ type: 'sandbox-error', data: e.message }, '*');
+                window.parent.postMessage({ type: 'sandbox-error', data: e.stack || e.message }, '*');
               }
             </script>
           </body>

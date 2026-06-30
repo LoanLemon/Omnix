@@ -8,9 +8,11 @@ export function useSettings() {
   });
 
   const [contextMemoryLimit, setContextMemoryLimit] = useState<number>(() => {
+    const isElectron = typeof window !== "undefined" && !!(window as any).electron;
     const saved = localStorage.getItem("omnix_context_memory_limit");
-    const val = saved ? parseInt(saved, 10) : 8192;
-    return val < 100 ? 8192 : val; // Convert old message count to new default length
+    const val = saved ? parseInt(saved, 10) : (isElectron ? 8192 : 4096);
+    let parsed = val < 100 ? (isElectron ? 8192 : 4096) : val; // Convert old message count to new default length
+    return isElectron ? parsed : Math.min(parsed, 4096);
   });
 
   const [temperature, setTemperature] = useState<number>(() => {
@@ -85,8 +87,23 @@ export function useSettings() {
     return saved === "true"; // default to false
   });
 
+  const [mmrsModel, setMmrsModel] = useState<"text" | "image" | "music">(() => {
+    const saved = localStorage.getItem("omnix_mmrs_model");
+    return (saved as "text" | "image" | "music") || "text";
+  });
+
+  const [mmrsMode, setMmrsMode] = useState<"operational" | "bob" | "duality" | "polarity">(() => {
+    const saved = localStorage.getItem("omnix_mmrs_mode");
+    return (saved as "operational" | "bob" | "duality" | "polarity") || "operational";
+  });
+
   const [previousTextModel, setPreviousTextModel] = useState<string | null>(() => {
     return localStorage.getItem("omnix_prev_text_model");
+  });
+
+  const [inactivityTimeout, setInactivityTimeout] = useState<number>(() => {
+    const saved = localStorage.getItem("omnix_inactivity_timeout");
+    return saved ? parseInt(saved, 10) : 10;
   });
 
   useEffect(() => {
@@ -140,6 +157,18 @@ export function useSettings() {
   useEffect(() => {
     localStorage.setItem("omnix_enable_mmrs", enableMMRS.toString());
   }, [enableMMRS]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_inactivity_timeout", inactivityTimeout.toString());
+  }, [inactivityTimeout]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_mmrs_model", mmrsModel);
+  }, [mmrsModel]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_mmrs_mode", mmrsMode);
+  }, [mmrsMode]);
 
   useEffect(() => {
     localStorage.setItem("omnix_speak_enabled", speakEnabled.toString());
@@ -202,7 +231,13 @@ export function useSettings() {
     setThinkEnabled,
     enableMMRS,
     setEnableMMRS,
+    mmrsModel,
+    setMmrsModel,
+    mmrsMode,
+    setMmrsMode,
     previousTextModel,
     setPreviousTextModel,
+    inactivityTimeout,
+    setInactivityTimeout,
   };
 }

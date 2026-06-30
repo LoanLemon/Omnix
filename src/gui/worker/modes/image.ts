@@ -174,7 +174,15 @@ export async function handleImageInference(
       ...(pipeDoSample !== undefined ? { do_sample: pipeDoSample } : {}),
     };
 
-    const output = await engine.pipeline(input, pipeOptions);
+    let output;
+    try {
+      output = await engine.pipeline(input, pipeOptions);
+    } catch (pipelineErr: any) {
+      if (String(pipelineErr).includes("unaligned accesses") || String(pipelineErr).includes("memory access out of bounds")) {
+         throw new Error("CONTEXT_LENGTH_EXCEEDED: The input context exceeds the safe memory limits of the current engine. Please shorten your prompt or enable Safe Engine Mode.");
+      }
+      throw pipelineErr;
+    }
     if (output instanceof RawImage) {
       const result = {
         __serialized_type__: "RawImage",

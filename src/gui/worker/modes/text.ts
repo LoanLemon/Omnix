@@ -128,8 +128,9 @@ export async function handleTextInference(
 
     const tempVal = options.temperature !== undefined ? Number(options.temperature) : undefined;
     const topPVal = options.top_p !== undefined ? Number(options.top_p) : undefined;
+    const topKVal = options.top_k !== undefined ? Number(options.top_k) : undefined;
     let gemmaDoSample = options.do_sample !== undefined ? !!options.do_sample : false;
-    if (tempVal !== undefined || topPVal !== undefined) {
+    if (tempVal !== undefined || topPVal !== undefined || topKVal !== undefined) {
       gemmaDoSample = tempVal !== 0;
     }
 
@@ -153,14 +154,23 @@ export async function handleTextInference(
       callback_function: myOnToken
     }) : undefined;
 
-    const outputs = await engine.model.generate({
-      ...inputs,
-      max_new_tokens: maxTokens,
-      do_sample: gemmaDoSample,
-      streamer,
-      ...(tempVal !== undefined ? { temperature: tempVal } : {}),
-      ...(topPVal !== undefined ? { top_p: topPVal } : {}),
-    });
+    let outputs;
+    try {
+      outputs = await engine.model.generate({
+        ...inputs,
+        max_new_tokens: maxTokens,
+        do_sample: gemmaDoSample,
+        streamer,
+        ...(tempVal !== undefined ? { temperature: tempVal } : {}),
+        ...(topPVal !== undefined ? { top_p: topPVal } : {}),
+        ...(topKVal !== undefined ? { top_k: topKVal } : {}),
+      });
+    } catch (genErr: any) {
+      if (String(genErr).includes("unaligned accesses") || String(genErr).includes("memory access out of bounds")) {
+         throw new Error("CONTEXT_LENGTH_EXCEEDED: The input context exceeds the safe memory limits of the current engine. Please shorten your prompt or enable Safe Engine Mode.");
+      }
+      throw genErr;
+    }
 
     const sliceOutput = outputs.slice(null, [inputs.input_ids.dims.at(-1), null]);
     let decoded = engine.processor.batch_decode(
@@ -187,8 +197,9 @@ export async function handleTextInference(
   if (engine.pipeline) {
     const pipeTemp = options.temperature !== undefined ? Number(options.temperature) : undefined;
     const pipeTopP = options.top_p !== undefined ? Number(options.top_p) : undefined;
+    const pipeTopK = options.top_k !== undefined ? Number(options.top_k) : undefined;
     let pipeDoSample = options.do_sample !== undefined ? !!options.do_sample : undefined;
-    if (pipeTemp !== undefined || pipeTopP !== undefined) {
+    if (pipeTemp !== undefined || pipeTopP !== undefined || pipeTopK !== undefined) {
       pipeDoSample = pipeTemp !== 0;
     }
 
@@ -197,13 +208,14 @@ export async function handleTextInference(
       max_new_tokens: maxTokens,
       ...(pipeTemp !== undefined ? { temperature: pipeTemp } : {}),
       ...(pipeTopP !== undefined ? { top_p: pipeTopP } : {}),
+      ...(pipeTopK !== undefined ? { top_k: pipeTopK } : {}),
       ...(pipeDoSample !== undefined ? { do_sample: pipeDoSample } : {}),
     };
     let formattedInput: any = input;
     let promptString = "";
     let promptWithoutSpecialTokens = "";
 
-    const isTextGen = engine.pipeline.task === "text-generation";
+    const isTextGen = engine.pipeline.task === "text-generation" || engine.pipeline.task === "image-text-to-text";
 
     if (isTextGen && typeof input === "string") {
       const messages = [];
@@ -242,33 +254,44 @@ export async function handleTextInference(
                                    modelIdLower.includes("llama") || 
                                    modelIdLower.includes("gemma") || 
                                    modelIdLower.includes("tiny-llm") || 
-                                   modelIdLower.includes("janus");
+                                   modelIdLower.includes("janus") ||
+                                   modelIdLower.includes("fara");
 
-      try {
-        if (!preferCustomTemplate && engine.pipeline.tokenizer?.apply_chat_template) {
-          const templated = engine.pipeline.tokenizer.apply_chat_template(messages, {
-            tokenize: false,
-            add_generation_prompt: true,
-            enable_thinking: options?.thinkEnabled || false
-          });
-          if (templated && typeof templated === "string" && templated.trim().length > 0) {
-            formattedInput = templated;
-            promptString = templated;
-            isTemplatedOk = true;
-          }
+      const isLfm2 = modelIdLower.includes("lfm2");
+
+      if (isLfm2) {
+        formattedInput = messages;
+        isTemplatedOk = true;
+        if (options.tools) {
+          pipeOptions.tokenizer_encode_kwargs = { tools: options.tools };
         }
-      } catch (templateErr) {
-        console.warn("Worker: apply_chat_template failed, using robust fallback compileChatTemplate:", templateErr);
-      }
+      } else {
+        try {
+          if (!preferCustomTemplate && engine.pipeline.tokenizer?.apply_chat_template) {
+            const templated = engine.pipeline.tokenizer.apply_chat_template(messages, {
+              tokenize: false,
+              add_generation_prompt: true,
+              enable_thinking: options?.thinkEnabled || false
+            });
+            if (templated && typeof templated === "string" && templated.trim().length > 0) {
+              formattedInput = templated;
+              promptString = templated;
+              isTemplatedOk = true;
+            }
+          }
+        } catch (templateErr) {
+          console.warn("Worker: apply_chat_template failed, using robust fallback compileChatTemplate:", templateErr);
+        }
 
-      if (!isTemplatedOk) {
-        const compiled = compileChatTemplate(engine.currentModelId || "", messages, options);
-        formattedInput = compiled;
-        promptString = compiled;
+        if (!isTemplatedOk) {
+          const compiled = compileChatTemplate(engine.currentModelId || "", messages, options);
+          formattedInput = compiled;
+          promptString = compiled;
+        }
       }
     }
 
-    if (engine.pipeline.tokenizer) {
+    if (engine.pipeline.tokenizer && typeof formattedInput === "string") {
       try {
         const promptTokens = engine.pipeline.tokenizer.encode(formattedInput);
         const tokensArray = Array.from((promptTokens && promptTokens.data) || promptTokens || []);
@@ -280,55 +303,71 @@ export async function handleTextInference(
     }
 
     if (onToken && engine.pipeline.tokenizer) {
-      let lastLength = 0;
+      if (typeof formattedInput === "object") {
+        const transformers = await import("@huggingface/transformers");
+        pipeOptions.streamer = new transformers.TextStreamer(engine.pipeline.tokenizer, {
+          skip_prompt: true,
+          skip_special_tokens: true,
+          callback_function: onToken
+        });
+      } else {
+        let lastLength = 0;
+        pipeOptions.callback_function = (beams: any) => {
+          const decoded = engine.pipeline.tokenizer.decode(beams[0].output_token_ids, { skip_special_tokens: true });
+          let currentText = decoded;
 
-      pipeOptions.callback_function = (beams: any) => {
-        const decoded = engine.pipeline.tokenizer.decode(beams[0].output_token_ids, { skip_special_tokens: true });
-        let currentText = decoded;
-
-        if (promptWithoutSpecialTokens) {
-          try {
-            let resIdx = 0;
-            let promptIdx = 0;
-            while (promptIdx < promptWithoutSpecialTokens.length && resIdx < currentText.length) {
-              const pChar = promptWithoutSpecialTokens[promptIdx];
-              const rChar = currentText[resIdx];
-              if (pChar === rChar) {
-                promptIdx++;
-                resIdx++;
-              } else if (/\s/.test(pChar)) {
-                promptIdx++;
-              } else if (/\s/.test(rChar)) {
-                resIdx++;
+          if (promptWithoutSpecialTokens) {
+            try {
+              let resIdx = 0;
+              let promptIdx = 0;
+              while (promptIdx < promptWithoutSpecialTokens.length && resIdx < currentText.length) {
+                const pChar = promptWithoutSpecialTokens[promptIdx];
+                const rChar = currentText[resIdx];
+                if (pChar === rChar) {
+                  promptIdx++;
+                  resIdx++;
+                } else if (/\s/.test(pChar)) {
+                  promptIdx++;
+                } else if (/\s/.test(rChar)) {
+                  resIdx++;
+                } else {
+                  break;
+                }
+              }
+              if (promptIdx >= promptWithoutSpecialTokens.length - 2) {
+                currentText = currentText.substring(resIdx);
               } else {
-                break;
+                currentText = "";
+              }
+            } catch (e) {
+              if (currentText.startsWith(promptWithoutSpecialTokens)) {
+                currentText = currentText.substring(promptWithoutSpecialTokens.length);
+              } else {
+                currentText = "";
               }
             }
-            if (promptIdx >= promptWithoutSpecialTokens.length - 2) {
-              currentText = currentText.substring(resIdx);
-            } else {
-              currentText = "";
-            }
-          } catch (e) {
-            if (currentText.startsWith(promptWithoutSpecialTokens)) {
-              currentText = currentText.substring(promptWithoutSpecialTokens.length);
-            } else {
-              currentText = "";
-            }
+          } else if (promptString && currentText.startsWith(promptString)) {
+            currentText = currentText.substring(promptString.length);
           }
-        } else if (promptString && currentText.startsWith(promptString)) {
-          currentText = currentText.substring(promptString.length);
-        }
 
-        const newToken = currentText.substring(lastLength);
-        lastLength = currentText.length;
-        if (newToken) {
-          onToken(newToken);
-        }
-      };
+          const newToken = currentText.substring(lastLength);
+          lastLength = currentText.length;
+          if (newToken) {
+            onToken(newToken);
+          }
+        };
+      }
     }
 
-    const output = await engine.pipeline(formattedInput, pipeOptions);
+    let output;
+    try {
+      output = await engine.pipeline(formattedInput, pipeOptions);
+    } catch (pipelineErr: any) {
+      if (String(pipelineErr).includes("unaligned accesses") || String(pipelineErr).includes("memory access out of bounds")) {
+         throw new Error("CONTEXT_LENGTH_EXCEEDED: The input context exceeds the safe memory limits of the current engine. Please shorten your prompt or enable Safe Engine Mode.");
+      }
+      throw pipelineErr;
+    }
     
     let responseText = "";
     if (Array.isArray(output) && output[0]?.generated_text !== undefined) {
@@ -488,12 +527,20 @@ export async function runDirectorInference(
       query = `${DIRECTOR_SYSTEM_PROMPT}\nUser: ${input}\nAssistant:`;
     }
 
-    const output = await director(query, {
-      max_new_tokens: 128,
-      temperature: 0.1,
-      do_sample: false,
-      return_full_text: false
-    });
+    let output;
+    try {
+      output = await director(query, {
+        max_new_tokens: 128,
+        temperature: 0.1,
+        do_sample: false,
+        return_full_text: false
+      });
+    } catch (directorErr: any) {
+      if (String(directorErr).includes("unaligned accesses") || String(directorErr).includes("memory access out of bounds")) {
+         throw new Error("CONTEXT_LENGTH_EXCEEDED: The input context exceeds the safe memory limits of the current engine. Please shorten your prompt or enable Safe Engine Mode.");
+      }
+      throw directorErr;
+    }
 
     const gen = output[0].generated_text;
     if (Array.isArray(gen)) {

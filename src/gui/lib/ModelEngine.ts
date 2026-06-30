@@ -39,6 +39,7 @@ function sanitizePayload(obj: any): any {
 
 export class BrowserModelEngine {
   private workers: Map<string, Worker | null> = new Map();
+  private workerQueues: Map<string, Promise<void>> = new Map();
   private enableMMRS: boolean = false;
   private pendingRequests: Map<string, {
     resolve: (val: any) => void;
@@ -60,16 +61,27 @@ export class BrowserModelEngine {
 
   // Idle timer & listener states
   private idleTimeoutId: any = null;
-  private readonly IDLE_LIMIT_MS = 10 * 60 * 1000; // 10 minutes
+  private idleLimitMinutes: number = 10;
   private listeners: Set<() => void> = new Set();
   private onIdleUnloadCallback: (() => void) | null = null;
 
   constructor() {
+    if (typeof window !== "undefined") {
+      const savedTimeout = localStorage.getItem("omnix_inactivity_timeout");
+      if (savedTimeout) {
+        this.idleLimitMinutes = parseInt(savedTimeout, 10);
+      }
+    }
     this.initWorker("main");
   }
 
   getCurrentModelId(): string | null {
     return this.currentModelId;
+  }
+
+  setIdleTimeout(minutes: number) {
+    this.idleLimitMinutes = minutes;
+    this.restartIdleTimer();
   }
 
   subscribe(listener: () => void) {
@@ -97,11 +109,13 @@ export class BrowserModelEngine {
   private restartIdleTimer() {
     this.stopIdleTimer();
     
+    if (this.idleLimitMinutes <= 0) return;
+    
     // Only start idle timer if there are no pending requests and at least one model is active
     if (this.pendingRequests.size === 0 && (this.currentModelId || this.currentOpModelId || this.hasDirector || this.hasStt || this.hasTts || this.hasEmbedding)) {
-      console.log("⏱️ Starting 10-minute idle unload timer...");
+      console.log(`⏱️ Starting ${this.idleLimitMinutes}-minute idle unload timer...`);
       this.idleTimeoutId = setTimeout(async () => {
-        console.log("💤 App idle for 10 minutes. Unloading active models to free up GPU/RAM memory...");
+        console.log(`💤 App idle for ${this.idleLimitMinutes} minutes. Unloading active models to free up GPU/RAM memory...`);
         try {
           await this.clear();
           if (this.onIdleUnloadCallback) {
@@ -110,7 +124,7 @@ export class BrowserModelEngine {
         } catch (e) {
           console.error("Failed to unload models during idle cleanup:", e);
         }
-      }, this.IDLE_LIMIT_MS);
+      }, this.idleLimitMinutes * 60 * 1000);
     }
   }
 
@@ -171,9 +185,10 @@ export class BrowserModelEngine {
           errorMsg.includes("failed to call OrtRun") || 
           errorMsg.includes("GPUBuffer") || 
           errorMsg.includes("mapAsync") || 
-          errorMsg.includes("device lost")
+          errorMsg.includes("device lost") ||
+          errorMsg.includes("bad_alloc")
         ) {
-          console.error(`🚨 Fatal WebGPU error caught at worker [${key}] level. Restarting worker...`);
+          console.error(`🚨 Fatal memory or WebGPU error caught at worker [${key}] level. Restarting worker...`);
           this.restartWorker(key);
         }
       });
@@ -187,9 +202,13 @@ export class BrowserModelEngine {
             error.includes("failed to call OrtRun") || 
             error.includes("GPUBuffer") || 
             error.includes("mapAsync") || 
-            error.includes("device lost")
+            error.includes("device lost") ||
+            error.includes("destroy") ||
+            error.includes("disposed") ||
+            error.includes("session") ||
+            error.includes("bad_alloc")
           )) {
-            console.error(`🚨 Fatal WebGPU error detected globally on worker [${key}]. Restarting worker...`);
+            console.error(`🚨 Fatal memory or WebGPU error detected globally on worker [${key}]. Restarting worker...`);
             this.restartWorker(key);
           }
           return;
@@ -225,9 +244,13 @@ export class BrowserModelEngine {
             error.includes("failed to call OrtRun") || 
             error.includes("GPUBuffer") || 
             error.includes("mapAsync") || 
-            error.includes("device lost")
+            error.includes("device lost") ||
+            error.includes("destroy") ||
+            error.includes("disposed") ||
+            error.includes("session") ||
+            error.includes("bad_alloc")
           )) {
-            console.error(`🚨 Fatal WebGPU error detected on worker [${key}]. Terminating and restarting to recover...`);
+            console.error(`🚨 Fatal memory or WebGPU error detected on worker [${key}]. Terminating and restarting to recover...`);
             this.restartWorker(key);
           }
 
@@ -236,6 +259,13 @@ export class BrowserModelEngine {
       });
 
       this.workers.set(key, worker);
+      
+      // Automatically dispatch init to the newly created worker
+      worker.postMessage({
+        type: "init",
+        requestId: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36),
+        payload: {}
+      });
     } catch (err) {
       console.error(`Critical: Failed to initialize Web Worker [${key}] inside ModelEngine:`, err);
     }
@@ -287,7 +317,7 @@ export class BrowserModelEngine {
     this.notify();
   }
 
-  private postToWorker(
+  private async postToWorker(
     type: string, 
     payload?: any, 
     progress_callback?: (p: any) => void, 
@@ -297,9 +327,20 @@ export class BrowserModelEngine {
     const category = payload?.category || "";
     const workerKey = targetWorkerKey || this.getWorkerKeyForCategory(category);
 
+    let taskResolve: () => void;
+    const nextQueue = new Promise<void>((res) => {
+      taskResolve = res;
+    });
+
+    const currentQueue = this.workerQueues.get(workerKey) || Promise.resolve();
+    this.workerQueues.set(workerKey, currentQueue.catch(() => {}).then(() => nextQueue));
+
+    await currentQueue.catch(() => {});
+
     this.initWorker(workerKey);
     const worker = this.workers.get(workerKey);
     if (!worker) {
+      taskResolve!();
       return Promise.reject(new Error(`Worker [${workerKey}] not initialized`));
     }
 
@@ -310,10 +351,12 @@ export class BrowserModelEngine {
       this.pendingRequests.set(requestId, {
         resolve: (val: any) => {
           resolve(val);
+          taskResolve();
           this.restartIdleTimer();
         },
         reject: (err: any) => {
           reject(err);
+          taskResolve();
           this.restartIdleTimer();
         },
         progress_callback,
@@ -407,19 +450,39 @@ export class BrowserModelEngine {
   }
 
   async clear() {
-    this.currentModelId = null;
-    this.currentOpModelId = null;
-    this.hasDirector = false;
-    this.hasStt = false;
-    this.hasTts = false;
-    this.hasEmbedding = false;
     if (this.useLocalServerApi) {
+      this.currentModelId = null;
+      this.currentOpModelId = null;
+      this.hasDirector = false;
+      this.hasStt = false;
+      this.hasTts = false;
+      this.hasEmbedding = false;
       this.notify();
       return { success: true };
     }
-    const res = await this.postToWorker("clear");
+    
+    console.log("🧹 Gracefully purging WebGPU buffers before worker termination...");
+    try {
+      // Create a promise array to clear all active workers gracefully first
+      const clearPromises = [];
+      for (const [key, w] of Array.from(this.workers.entries())) {
+        if (w) {
+          clearPromises.push(this.postToWorker("clear", undefined, undefined, undefined, key).catch(() => {}));
+        }
+      }
+      await Promise.all(clearPromises);
+    } catch (e) {
+      console.warn("Failed to gracefully clear some workers:", e);
+    }
+    
+    // Give the browser a small window to process the WebGPU buffer releases
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    console.log("🧹 Terminating all workers to completely free WebAssembly memory...");
+    this.terminateAllWorkers();
+    
     this.notify();
-    return res;
+    return { success: true };
   }
 
   getEstimatedLoadedWeightsBytes(): number {
@@ -678,6 +741,10 @@ export class BrowserModelEngine {
   }
 
   private getDefaultModel(category: string) {
+    if (category === "text") {
+      const gemma = MODELS.find(m => m.id === "gemma-3 1B" && m.category === "text");
+      if (gemma) return gemma.id;
+    }
     const found = MODELS.find(m => m.category === category);
     return found ? found.id : "";
   }

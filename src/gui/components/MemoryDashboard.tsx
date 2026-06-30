@@ -199,17 +199,22 @@ export function MemoryDashboard() {
               {/* Rolling short term chats list (from useAppContext message queue) */}
               <div className="space-y-1.5 pt-1.5 border-t border-border/35">
                 <div className="flex items-center justify-between">
-                  <div className="text-[9px] font-mono text-muted-foreground/60 uppercase">Context Retention (Chars)</div>
+                  <div className="text-[9px] font-mono text-muted-foreground/60 uppercase">Context Retention (Tokens)</div>
                   <div className="text-[9px] font-mono text-orange-500">{contextMemoryLimit}</div>
                 </div>
-                <Slider 
-                  value={[contextMemoryLimit]}
-                  min={4096}
-                  max={65536}
-                  step={1024}
-                  onValueChange={(val) => setContextMemoryLimit(val[0])}
-                  className="mb-2"
-                />
+                <div 
+                  title={!(typeof window !== "undefined" && !!(window as any).electron) ? "This feature is capped by the browser. Download Omnix for less restraints." : undefined}
+                >
+                  <Slider 
+                    value={[contextMemoryLimit]}
+                    min={4096}
+                    max={65536}
+                    step={1024}
+                    onValueChange={(val) => setContextMemoryLimit(val[0])}
+                    disabled={!(typeof window !== "undefined" && !!(window as any).electron)}
+                    className="mb-2"
+                  />
+                </div>
                 <div className="max-h-[110px] overflow-y-auto space-y-1.5 pr-0.5 custom-scrollbar">
                   {(() => {
                     const visibleMsgs = messages.filter(m => !m.hidden);
@@ -217,7 +222,7 @@ export function MemoryDashboard() {
                     let len = 0;
                     for (let i = visibleMsgs.length - 1; i >= 0; i--) {
                       const m = visibleMsgs[i];
-                      const mLen = (m.content?.length || 0) + (m.image ? 500 : 0);
+                      const mLen = (m.content?.length || 0) / 4 + (m.image ? 125 : 0); // Approximate tokens
                       if (retained.length > 0 && len + mLen > contextMemoryLimit) break;
                       retained.unshift(m);
                       len += mLen;

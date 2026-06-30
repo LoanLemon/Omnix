@@ -13,6 +13,7 @@ import { Header } from "@/components/Header";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatArea } from "@/components/ChatArea";
 import { PreviewSidebar } from "@/components/PreviewSidebar";
+import { WorkflowTracker } from "@/components/WorkflowTracker";
 import { ErrorOverlay } from "@/components/ErrorOverlay";
 import { AuthPromptModal } from "@/components/AuthPromptModal";
 
@@ -198,6 +199,10 @@ function AppContent() {
           toggleRecording={toggleRecording}
           handleOptionSelect={() => {}}
         />
+
+        {chatMode === "sandbox" && (
+          <WorkflowTracker />
+        )}
 
         {(sandboxFiles.length > 0 || generatedImage || showMemoryDashboard || chatMode === "sandbox") && (
           <PreviewSidebar />

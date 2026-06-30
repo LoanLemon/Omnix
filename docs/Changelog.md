@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.7.0] - 2026-06-27
+
+### Added
+- **API Model Discovery**: Added a new GET `/api/listModels` endpoint to expose all supported models in JSON format for external API developers.
+- **Desktop Application Support**: Added Electron configuration and scripts (`npm run desktop`, `npm run build:electron`) to package Omnix as a desktop app.
+- **WebSocket Documentation**: Added a comprehensive WebSocket section to the Omnix Developer Guide with connection details, streaming instructions, and event types.
+- **Advanced Model Parameters**: Added support for `top_k` configuration in the local text generation engine.
+- **Sandbox NPM Auto-Resolution**: Enhanced `Sandbox.tsx` to automatically parse `package.json` for NPM dependencies and build a dynamic import map via `esm.sh`. This ensures third-party libraries (e.g. `styled-components`, `axios`) function seamlessly inside the sandbox without manual installations.
+- **Systemic Workflow Management**: Added the `submit_step` tool to the AI coder's toolkit, allowing the system to fully manage and validate workflow transitions natively without relying on AI self-prompting.
+- **Sandbox Debugging Fallback**: Added a UI fallback in `ChatArea.tsx` to wrap malformed, unparsed Coder outputs in a raw text block, ensuring developers can debug structural markdown issues when tool calls fail to parse.
+
+### Changed
+- **MaSON Serialization**: Replaced JSON with MaSON (Markdown Structured Object Notation) for all structured data passed into AI prompt contexts, reducing token overhead and improving readability.
+- **Coder Model Flexibility**: Coder models have been mirrored into the text category, allowing them to be utilized as standard chat models for both the GUI and the local API.
+- **Sandbox Write File Response**: Modified the `write_file` tool handler to dispatch a systemic acknowledgment (`shouldReply = true`) back to the Coder. This prevents the generation loop from hanging and allows continuous multi-file iteration.
+- **API Request Structure**: Updated the REST API (`/api/text`, `/api/vision`, `/api/image`, `/api/music`) to accept a structured `model` object for configurations (`id`, `qtype`, `temperature`, `top_p`, `top_k`, `maxTokens`).
+- **Developer Guide UI**: Renamed the 'Omnix Local API Guide' to 'Omnix Developer Guide' and introduced tabbed navigation for API and WebSocket documentation.
+- **Quantization Formatting**: API requests specifying `qtype` as `"q4fp16"` now automatically map to the internal `"q4f16"` format for ONNX models.
+- **Sandbox Coder System Prompt**: Refined the autonomous coder prompt to instruct the AI agent to inject dependencies solely via `package.json` and restricted it from suggesting or outputting terminal commands (e.g. `npm install`, `npx`).
+- **Workflow Progression Logic**: Replaced the automatic step advancement via `chat_user` with a deterministic, system-controlled state progression pipeline relying on structured validation.
+
+### Removed
+- **Self Tool**: Removed the `self` tool completely from the workflow tools list as it was ineffective at managing state transitions reliably.
+
+### Fixed
+- **Memory Leak and `std::bad_alloc` Crash**: Fixed an issue where prolonged inactivity could cause a `bad_alloc` crash upon model reload. The idle manager now fully terminates and recreates the Web Worker threads to completely purge WebAssembly and WebGPU memory leaks.
+- Fixed an issue in the worker thread where the requested model quantization type (`qtype`) was not being correctly passed during model initialization.
+
+---
+
 ## [0.6.0] - 2026-06-25
 
 ### Added

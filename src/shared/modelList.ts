@@ -11,32 +11,48 @@ export interface ModelInfo {
   category: "text" | "vision" | "tts" | "image-gen" | "stt" | "music-gen" | "director" | "coder" | "embedding";
   make?: string;
   minRam?: number; // Minimum RAM in GB
+  maxContextChars?: number; // Maximum safe context length in characters
 }
 
 export const MODELS: ModelInfo[] = [
   {
+    "id": "LFM2-1.2B-ONNX",
+    "modelID": "LemOneLabs/LFM2-1.2B-ONNX",
+    "name": "LFM2-1.2B-ONNX",
+    "description": "Specialized for coding tasks. Great balance of speed and accuracy.",
+    "size": "~2GB",
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16"],
+    "category": "text",
+    "make": "QWEN",
+    "minRam": 3,
+    "maxContextChars": 8192
+  },
+  {
     "id": "qwen-2.5-coder-3b-q4",
-    "modelID": "onnx-community/Qwen2.5-Coder-3B-Instruct",
+    "modelID": "LemOneLabs/Qwen2.5-Coder-3B-Instruct",
     "name": "Qwen 2.5 Coder 3B",
     "description": "Specialized for coding tasks. Great balance of speed and accuracy.",
     "size": "~2GB",
     "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "fp16", "fp32"],
+    "qtypes": ["q4f16", "fp16" ],
     "category": "coder",
     "make": "QWEN",
-    "minRam": 3
+    "minRam": 3,
+    "maxContextChars": 16384
   },
   {
-    "id": "Qwen2.5-Coder-7B",
-    "modelID": "LemOneLabs/Qwen2.5-Coder-7B",
-    "name": "Qwen 2.5 Coder 7B",
+    "id": "qwen-2.5-coder-3b-text",
+    "modelID": "LemOneLabs/Qwen2.5-Coder-3B-Instruct",
+    "name": "Qwen 2.5 Coder 3B",
     "description": "Specialized for coding tasks. Great balance of speed and accuracy.",
-    "size": "~7GB",
-    "dtype": "FP16",
-    "qtypes": ["q4f16", "q4", "fp16", "fp32"],
-    "category": "coder",
+    "size": "~2GB",
+    "dtype": "q4",
+    "qtypes": ["q4f16", "fp16" ],
+    "category": "text",
     "make": "QWEN",
-    "minRam": 10
+    "minRam": 3,
+    "maxContextChars": 16384
   },
   {
     "id": "use-text-model",
@@ -45,7 +61,8 @@ export const MODELS: ModelInfo[] = [
     "description": "Bypasses dedicated director inference and routes tasks using the selected general text model instead.",
     "category": "director",
     "make": "DYNAMIC",
-    "minRam": 0
+    "minRam": 0,
+    "maxContextChars": 16384
   },
   {
     "id": "qwen-2.5-Instruct-abliterated-0.5b-q4",
@@ -54,10 +71,11 @@ export const MODELS: ModelInfo[] = [
     "description": "Specialized for coding tasks. Great balance of speed and accuracy.",
     "size": "~0.5GB",
     "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
+    "qtypes": ["q4f16", "fp16" ],
     "category": "director",
     "make": "QWEN",
-    "minRam": 1
+    "minRam": 1,
+    "maxContextChars": 6000
   },
   {
     "id": "qwen-3-0.6b-q4",
@@ -66,7 +84,7 @@ export const MODELS: ModelInfo[] = [
     "description": "Next-generation ultra-lightweight Qwen model with great reasoning for routing and text tasks.",
     "size": "~0.6GB",
     "dtype": "q4f16",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
+    "qtypes": ["q4f16", "fp16" ],
     "category": "director",
     "make": "QWEN",
     "minRam": 1
@@ -78,10 +96,11 @@ export const MODELS: ModelInfo[] = [
     "description": "An ultra-compact 10M parameter language model pretrained on 32B tokens of Fineweb dataset. Extremely fast.",
     "size": "~25MB",
     "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
+    "qtypes": ["q4f16", "fp16" ],
     "category": "director",
     "make": "Tiny-LLM",
-    "minRam": 0.5
+    "minRam": 0.5,
+    "maxContextChars": 4096
   },
   {
     "id": "qwen-3-0.6b-q4-text",
@@ -90,10 +109,11 @@ export const MODELS: ModelInfo[] = [
     "description": "Next-generation ultra-lightweight Qwen model with great reasoning for text-generation and chat.",
     "size": "~0.6GB",
     "dtype": "q4f16",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
+    "qtypes": ["q4f16", "fp16" ],
     "category": "text",
     "make": "QWEN",
-    "minRam": 1
+    "minRam": 1,
+    "maxContextChars": 6000
   },
   {
     "id": "llama-3.2-1b",
@@ -101,47 +121,38 @@ export const MODELS: ModelInfo[] = [
     "name": "Llama 3.2 1B",
     "description": "Meta's lightweight 1B model. Extremely fast and highly optimized for on-device assistant tasks.",
     "size": "~1.2GB",
-    "dtype": "FP16",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16" ],
     "category": "text",
     "make": "META",
-    "minRam": 2
+    "minRam": 2,
+    "maxContextChars": 8192
   },
   {
     "id": "gemma-3 1B",
-    "modelID": "onnx-community/gemma-3-1b-it-ONNX",
+    "modelID": "LemOneLabs/gemma-3-1b-it-ONNX",
     "name": "gemma-3 1B",
     "description": "Gemma Excellent reasoning and instruction following.",
     "size": "~0.8GB",
-    "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16" ],
     "category": "text",
     "make": "Google",
-    "minRam": 2
+    "minRam": 2,
+    "maxContextChars": 8192
   },
   {
     "id": "llama-3.2-3b-q4",
-    "modelID": "onnx-community/Llama-3.2-3B-Instruct",
+    "modelID": "LemOneLabs/Llama-3.2-3B-Instruct",
     "name": "Llama 3.2 3B",
     "description": "Meta's flagship small model. Excellent reasoning and instruction following.",
     "size": "~2.2GB",
-    "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16" ],
     "category": "text",
     "make": "META",
-    "minRam": 4
-  },
-  {
-    "id": "llama-3.1-8b-instruct",
-    "modelID": "LemOneLabs/Llama-3.1-8B-Instruct-ONNX",
-    "name": "Llama 3.1 8B Instruct",
-    "description": "Meta's flagship small model. Excellent reasoning and instruction following.",
-    "size": "~4.8GB",
-    "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
-    "category": "text",
-    "make": "META",
-    "minRam": 6
+    "minRam": 4,
+    "maxContextChars": 16384
   },
   {
     "id": "gemma-4-e2b-q4",
@@ -149,11 +160,12 @@ export const MODELS: ModelInfo[] = [
     "name": "Gemma 4 E2B",
     "description": "Uses Per-Layer Embeddings (PLE) to provide 5B-level intelligence at a 2.3B size.",
     "size": "~1.5GB",
-    "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16" ],
     "category": "text",
     "make": "GOOGLE",
-    "minRam": 2
+    "minRam": 2,
+    "maxContextChars": 8192
   },
   {
     "id": "gemma-4-e4b-q4",
@@ -161,35 +173,12 @@ export const MODELS: ModelInfo[] = [
     "name": "Gemma 4 E4B",
     "description": "Uses Per-Layer Embeddings (PLE) to provide 5B-level intelligence at a 4B size.",
     "size": "~4GB",
-    "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16" ],
     "category": "text",
     "make": "GOOGLE",
-    "minRam": 6
-  },
-  {
-    "id": "phi-4-mini-q4",
-    "modelID": "onnx-community/Phi-4-mini-instruct",
-    "name": "Phi-4 Mini",
-    "description": "Microsoft's high-reasoning model optimized for complex logic in a small footprint.",
-    "size": "~2.3GB",
-    "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
-    "category": "text",
-    "make": "MICROSOFT",
-    "minRam": 4
-  },
-  {
-    "id": "mistral-nemo-12b-q4",
-    "modelID": "LemOneLabs/Mistral-Nemo-12B-Instruct-ONNX-INT4",
-    "name": "Mistral NeMo 12B",
-    "description": "Top-tier 12B model for high-end edge devices. Best-in-class multilingual support.",
-    "size": "~7.5GB",
-    "dtype": "q4",
-    "qtypes": ["q4f16", "q4", "q8", "fp16", "fp32"],
-    "category": "text",
-    "make": "MISTRAL",
-    "minRam": 12
+    "minRam": 6,
+    "maxContextChars": 16384
   },
 
   // VISION MODELS
@@ -200,8 +189,8 @@ export const MODELS: ModelInfo[] = [
     name: "FastVLM",
     description: "Tiny but powerful vision-language model. Can describe images and answer questions.",
     size: "~1.6GB",
-    dtype: "q4",
-    qtypes: ["q4f16", "q4", "q8", "fp16", "fp32"],
+    dtype: "q4f16",
+    qtypes: ["q4f16","fp16"],
     category: "vision",
     make: "FastVLM",
     minRam: 2,
@@ -215,7 +204,7 @@ export const MODELS: ModelInfo[] = [
     description: "State-of-the-art small TTS model. High quality, very fast.",
     size: "~350MB",
     dtype: "q4",
-    qtypes: ["q4f16", "q4", "q8", "fp16", "fp32"],
+    qtypes: ["q4f16", "q4", "fp16", "fp32"],
     category: "tts",
     make: "KOKORO",
     minRam: 1,
@@ -228,8 +217,8 @@ export const MODELS: ModelInfo[] = [
     name: "Janus-Pro-1B-ONNX",
     description: "Latent Consistency Model for fast inference. Good for lower-end hardware.",
     size: "~2GB",
-    dtype: "q4",
-    qtypes: ["q4f16", "q4", "q8", "fp16", "fp32"],
+    dtype:  "q4",
+    qtypes: ["q4","q4f16"],
     category: "image-gen",
     make: "LATENT-CONSISTENCY",
     minRam: 4,
@@ -253,7 +242,7 @@ export const MODELS: ModelInfo[] = [
     description: "Fast and efficient speech-to-text model for English.",
     size: "~150MB",
     dtype: "q4",
-    qtypes: ["q4f16", "q4", "q8", "fp16", "fp32"],
+    qtypes: ["q4f16", "q4", "fp16", "fp32"],
     category: "stt",
     make: "OPENAI",
     minRam: 1,
@@ -317,7 +306,7 @@ export function normalizeAndRegisterModel(
     description: "Custom dynamically registered HuggingFace model.",
     size: "~1.5GB", // conservative default
     dtype: normalized.toLowerCase().includes("fp16") ? "fp16" : "q4",
-    qtypes: ["q4f16", "q4", "q8", "fp16", "fp32"],
+    qtypes: ["q4f16", "q4", "fp16", "fp32"],
     category: category,
     make: "META", // attempt to process it as a 'Llama' model
     minRam: 4,
@@ -340,12 +329,14 @@ export function getRequiredRamForModel(model: ModelInfo, qtype?: string): number
 
   // Determine precision category
   let precision: "q4" | "q8" | "fp16" | "fp32" = "q4";
-  if (resolvedQtype.includes("fp32") || resolvedQtype.includes("f32")) {
+  if (resolvedQtype.includes("q4") || resolvedQtype.includes("int4")) {
+    precision = "q4";
+  } else if (resolvedQtype.includes("q8") || resolvedQtype.includes("fp8") || resolvedQtype.includes("f8") || resolvedQtype.includes("int8")) {
+    precision = "q8";
+  } else if (resolvedQtype.includes("fp32") || resolvedQtype.includes("f32")) {
     precision = "fp32";
   } else if (resolvedQtype.includes("fp16") || resolvedQtype.includes("f16") || resolvedQtype.includes("half")) {
     precision = "fp16";
-  } else if (resolvedQtype.includes("q8") || resolvedQtype.includes("fp8") || resolvedQtype.includes("f8")) {
-    precision = "q8";
   } else {
     precision = "q4"; // default/fallback
   }

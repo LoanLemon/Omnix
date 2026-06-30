@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Message } from "@shared/types";
 import { browserEngine } from "@/lib/ModelEngine";
+import { stringify as masonStringify } from "mason-parser";
 
 export function useSocketInference(
   addLog: (msg: string, type?: "info" | "error" | "success") => void,
@@ -214,7 +215,9 @@ export function useSocketInference(
             setIsModelLoading(false);
             
             socket.send(JSON.stringify({ type: "TASK_RESULT", requestId, output: result }));
-            addLog(`✅ Remote Task Completed: ${requestId.substring(0, 8)}`, "success");
+            
+            const usedModel = options?.modelId ? options.modelId : (category === "director" ? "auto (director)" : "auto (default)");
+            addLog(`✅ Remote Task Completed: ${requestId.substring(0, 8)} | Model: ${usedModel}`, "success");
 
             if (isNormalRequest) {
               setMessages(prev => prev.map(msg => {
@@ -236,9 +239,9 @@ export function useSocketInference(
                   } else if (category === "stt") {
                     updated.content = result.text || result;
                   } else if (category === "director") {
-                    updated.content = `Routed intent: ${result.category || result.intent || JSON.stringify(result)}`;
+                    updated.content = `Routed intent: ${result.category || result.intent || masonStringify(result, 0, undefined, { compact: true })}`;
                   } else {
-                    updated.content = typeof result === "string" ? result : (result.response || JSON.stringify(result));
+                    updated.content = typeof result === "string" ? result : (result.response || masonStringify(result, 0, undefined, { compact: true }));
                   }
                   return updated;
                 }

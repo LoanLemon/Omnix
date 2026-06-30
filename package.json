@@ -1,6 +1,6 @@
 {
   "name": "omnix",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "type": "module",
   "main": "electron/main.js",
   "bin": {
@@ -18,10 +18,32 @@
     "build:electron": "npm run build && electron-builder"
   },
   "build": {
-    "appId": "com.omnix.studio",
-    "productName": "Omnix Studio",
+    "appId": "com.lemone.omnix",
+    "productName": "Omnix",
     "directories": {
       "output": "dist_electron"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "LoanLemon",
+        "repo": "Omnix"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
     },
     "files": [
       "dist/**/*",
@@ -50,6 +72,7 @@
     "express": "^4.21.2",
     "kokoro-js": "^1.2.1",
     "lucide-react": "^1.8.0",
+    "mason-parser": "^1.0.5",
     "motion": "^12.38.0",
     "multer": "^2.1.1",
     "onnxruntime-node": "^1.20.0",

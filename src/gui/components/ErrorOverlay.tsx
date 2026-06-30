@@ -29,6 +29,8 @@ export function ErrorOverlay({
                     errorMessage.toLowerCase().includes("memory") ||
                     errorMessage.toLowerCase().includes("array buffer") ||
                     errorMessage.toLowerCase().includes("std::bad_alloc") ||
+                    errorMessage.toLowerCase().includes("unaligned accesses") ||
+                    errorMessage.includes("CONTEXT_LENGTH_EXCEEDED") ||
                     errorMessage.includes("11514632");
   
   const isQuotaError = errorMessage.toLowerCase().includes("quota") || 

@@ -3,10 +3,11 @@ import { Message, ChatMode, FocusTopic, ErrorReport } from "@shared/types";
 import { MODELS } from "@shared/modelList";
 import { browserEngine } from "@/lib/ModelEngine";
 import { memoryStore } from "@/lib/memory";
+import { parseMarkdownToolCalls } from "@/lib/parseMarkdownToolCalls";
 import {
   TEXT_SYSTEM_PROMPT,
   gemma4TextSystemPrompt,
-  CODER_SYSTEM_PROMPT,
+  getCoderSystemPrompt,
   IMAGE_SYSTEM_PROMPT,
   MUSIC_SYSTEM_PROMPT,
   LIVE_SYSTEM_PROMPT,
@@ -22,6 +23,55 @@ export const getFormattedTimestamp = () => {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 };
+
+function chunkText(text: string, maxLength: number): string[] {
+  if (text.length <= maxLength) return [text];
+  
+  const chunks: string[] = [];
+  let currentText = text;
+  
+  while (currentText.length > maxLength) {
+    let splitIndex = -1;
+    const searchArea = currentText.substring(0, maxLength);
+    
+    // Primary: Double line break
+    splitIndex = searchArea.lastIndexOf('\n\n');
+    
+    // Secondary: Single line break
+    if (splitIndex === -1) {
+      splitIndex = searchArea.lastIndexOf('\n');
+    }
+    
+    // Code breaks
+    if (splitIndex === -1) {
+      const braceIndex = searchArea.lastIndexOf('}');
+      const bracketIndex = searchArea.lastIndexOf('>');
+      splitIndex = Math.max(braceIndex, bracketIndex);
+    }
+    
+    // Comma fallback
+    if (splitIndex === -1) {
+      splitIndex = searchArea.lastIndexOf(',');
+    }
+    
+    // Hard fallback
+    if (splitIndex === -1 || splitIndex === 0) {
+      splitIndex = maxLength - 1;
+    } else {
+      // Include the separator in the current chunk if it's not a hard fallback
+      splitIndex += 1;
+    }
+    
+    chunks.push(currentText.substring(0, splitIndex));
+    currentText = currentText.substring(splitIndex);
+  }
+  
+  if (currentText.length > 0) {
+    chunks.push(currentText);
+  }
+  
+  return chunks;
+}
 
 export function useChatLogic(
   messages: Message[],
@@ -59,10 +109,14 @@ export function useChatLogic(
   temperature?: number,
   topP?: number,
   topK?: number,
+  sandboxFiles?: any[],
   setSandboxFiles?: React.Dispatch<React.SetStateAction<any[]>>,
+  currentStepIndex?: number,
+  setCurrentStepIndex?: React.Dispatch<React.SetStateAction<number>>,
   enableMMRS?: boolean,
   feedSpeechToken?: (fullText: string) => void,
   flushSpeech?: (fullText: string) => void,
+  speakEnabled?: boolean,
 ) {
   const [input, setInput] = useState("");
   const [isTextGenerating, setIsTextGenerating] = useState(false);
@@ -183,6 +237,11 @@ export function useChatLogic(
       let targetModelId =
         options.modelId ||
         (category === "text" ? selectedModels.text : selectedModels[category]);
+
+      if (!options.qtype && selectedQtypes && selectedQtypes[targetModelId]) {
+        options.qtype = selectedQtypes[targetModelId];
+      }
+
       let finalSystemPrompt = options.systemPrompt || "";
       try {
         // Ensure the correct model is loaded and sync React state
@@ -444,7 +503,11 @@ export function useChatLogic(
                 const filtered = prev.filter((m) => !m.isThinking);
                 return filtered.map((m) => {
                   if (m.id === assistantMsgId) {
-                    return { ...m, content: displayContent, isQueued: false };
+                    let actualContent = displayContent;
+                    if (speakEnabled) {
+                       actualContent = (thinkEnabled && thoughts.trim()) ? `<|channel>thought\n${thoughts.trim()}\n<channel|>\n` + (m.spokenContent || "") : (m.spokenContent || "");
+                    }
+                    return { ...m, content: actualContent, fullContent: displayContent, isQueued: false };
                   }
                   return m;
                 });
@@ -526,9 +589,16 @@ export function useChatLogic(
                       flushSpeech(finalContent);
                     }
                   }
+                  let actualFinalContent = finalContent;
+                  if (speakEnabled) {
+                     const parsedThoughts = m.fullContent ? (m.fullContent.match(/<think>[\s\S]*?(?:<\/think>|$)/i) || m.fullContent.match(/<\|channel>thought\n[\s\S]*?(?:<channel\|>|$)/i)) : null;
+                     const thoughtsText = parsedThoughts ? parsedThoughts[0] + "\n" : "";
+                     actualFinalContent = thoughtsText + (m.spokenContent || "");
+                  }
+
                   return {
                     ...m,
-                    content: finalContent,
+                    content: actualFinalContent,
                     isQueued: false,
                   };
                 }
@@ -550,66 +620,117 @@ export function useChatLogic(
               .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "")
               .trim();
 
-            let jsonString = cleanResult;
-            const jsonMatch = cleanResult.match(
-              /```(?:json)?\s*([\s\S]*?)\s*```/,
-            );
-            if (jsonMatch) {
-              jsonString = jsonMatch[1].trim();
-            } else {
-              const firstBrace = cleanResult.indexOf("{");
-              const lastBrace = cleanResult.lastIndexOf("}");
-              if (
-                firstBrace !== -1 &&
-                lastBrace !== -1 &&
-                lastBrace > firstBrace
-              ) {
-                jsonString = cleanResult.substring(firstBrace, lastBrace + 1);
-              }
+            const toolCalls = parseMarkdownToolCalls(cleanResult);
+
+            if (toolCalls.length === 0 && cleanResult.trim() !== "") {
+              // Just a safety check if no tool calls were found, maybe throw or log.
+              throw new Error("No tool calls found in response.");
             }
 
-            let parsed;
-            try {
-              parsed = JSON.parse(jsonString);
-            } catch (e) {
-              jsonString = jsonString
-                .replace(/\\}/g, "}")
-                .replace(/\\{/g, "{")
-                .replace(/\\'/g, "'");
-              parsed = JSON.parse(jsonString);
-            }
-            if (
-              parsed &&
-              parsed.tool === "write_file" &&
-              parsed.params &&
-              parsed.params.name &&
-              parsed.params.content
-            ) {
-              if (setSandboxFiles) {
-                setSandboxFiles((prev) => {
-                  const newFile = {
-                    name: parsed.params.name,
-                    content: parsed.params.content,
-                    language: parsed.params.language || "typescript",
-                  };
-                  const existingIdx = prev.findIndex(
-                    (f) => f.name === newFile.name,
-                  );
-                  if (existingIdx >= 0) {
-                    const updated = [...prev];
-                    updated[existingIdx] = newFile;
-                    return updated;
+            for (let parsed of toolCalls) {
+              if (parsed && parsed.tool) {
+                let toolResponse = "";
+                let shouldReply = false;
+
+                if (parsed.tool === "write_file" && parsed.params && parsed.params.name) {
+                  if (setSandboxFiles) {
+                    setSandboxFiles((prev) => {
+                      const newFile = {
+                        name: parsed.params.name,
+                        content: parsed.params.content || "",
+                        language: parsed.params.language || "typescript",
+                      };
+                      const existingIdx = prev.findIndex((f) => f.name === newFile.name);
+                      if (existingIdx >= 0) {
+                        const updated = [...prev];
+                        updated[existingIdx] = newFile;
+                        return updated;
+                      }
+                      return [...prev, newFile];
+                    });
+                    addLog(`Sandbox: Wrote file ${parsed.params.name}`, "success");
                   }
-                  return [...prev, newFile];
-                });
-                addLog(`Sandbox: Wrote file ${parsed.params.name}`, "success");
+                  toolResponse = `System: Successfully wrote ${parsed.params.name}. You may continue.`;
+                  shouldReply = true;
+                } else if (parsed.tool === "list_files") {
+                  const files = sandboxFiles ? sandboxFiles.map(f => f.name).join("\n") : "";
+                  toolResponse = `Files in sandbox:\n${files}`;
+                  shouldReply = true;
+                  addLog(`Sandbox: Listed files`, "info");
+                } else if (parsed.tool === "read_file" && parsed.params && parsed.params.name) {
+                  const file = sandboxFiles?.find(f => f.name === parsed.params.name);
+                  if (file) {
+                    toolResponse = `Content of ${parsed.params.name}:\n${file.content}`;
+                  } else {
+                    toolResponse = `File ${parsed.params.name} not found.`;
+                  }
+                  shouldReply = true;
+                  addLog(`Sandbox: Read file ${parsed.params.name}`, "info");
+                } else if (parsed.tool === "read_function" && parsed.params && parsed.params.name && parsed.params.function) {
+                  toolResponse = "The read_function tool is currently limited. Please use read_file to view the entire file context instead.";
+                  shouldReply = true;
+                } else if (parsed.tool === "write_function" && parsed.params && parsed.params.name && parsed.params.function) {
+                  toolResponse = "The write_function tool is currently limited. Please use read_file and write_file to overwrite the entire file with your changes.";
+                  shouldReply = true;
+                } else if (parsed.tool === "submit_step") {
+                  if (chatMode === "sandbox" && currentStepIndex !== undefined && currentStepIndex >= 0 && currentStepIndex < 3 && setCurrentStepIndex) {
+                    if (parsed.params && parsed.params.validated === "true") {
+                      const stepNames = ["Action Plan", "File Structure", "Generation", "Linting"];
+                      const nextStep = currentStepIndex + 1;
+                      setCurrentStepIndex(nextStep);
+
+                      // Automatically post the validated data to chat and move to the next workflow step
+                      if (parsed.params.data) {
+                        setMessages((prev) => [
+                          ...prev,
+                          {
+                            id: Date.now().toString() + "-submitted",
+                            role: "assistant",
+                            content: `\`\`\`markdown\n# chat_user\n\n## message\n${parsed.params.data}\n\`\`\``,
+                            timestamp: Date.now(),
+                            category: "coder",
+                          },
+                        ]);
+                      }
+
+                      toolResponse = `System: Advanced to ${stepNames[nextStep]} step. Please proceed with the next step.`;
+                      shouldReply = true;
+                    } else {
+                      toolResponse = `System: Please validate the completion of this step. Review your work carefully. If it is fully complete and correct, call submit_step again with the parameter 'validated' set to 'true' and include your 'data'. If not, continue working.`;
+                      shouldReply = true;
+                    }
+                  }
+                } else if (parsed.tool === "chat_user") {
+                  addLog(`Sandbox: Messaged user`, "info");
+                  // Removed automatic workflow progression from chat_user to ensure system manages it via submit_step
+                }
+
+                if (shouldReply) {
+                  const uniqueId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+                  setMessages((prev) => [
+                    ...prev,
+                    {
+                      id: uniqueId,
+                      role: "user",
+                      content: toolResponse,
+                      timestamp: Date.now(),
+                      category: "coder",
+                    },
+                  ]);
+
+                  masterQueueRef.current.push({
+                    category: "coder",
+                    text: toolResponse,
+                    options: { ...options, retryCount: 0 },
+                  });
+                }
               }
             }
           } catch (e: any) {
-            // JSON parsing failed, likely not a tool call or malformed
+            // parsing failed, likely not a tool call or malformed
             const retryCount = options.retryCount || 0;
             if (retryCount < 3) {
-              const errorMessage = `Your last response was not valid JSON or failed to parse. Please try again and output ONLY a single valid JSON object containing the tool call. Do not write tutorials or raw text. Error: ${e.message}`;
+              const errorMessage = `Your last response did not contain a valid Markdown Tool Call or failed to parse. Please try again and follow the AI Output Schema exactly. Do not write tutorials or raw text. Error: ${e.message}`;
 
               setMessages((prev) => [
                 ...prev,
@@ -629,7 +750,7 @@ export function useChatLogic(
               });
             } else {
               addLog(
-                "Sandbox: AI failed to produce valid JSON 3 times. Halting retries.",
+                "Sandbox: AI failed to produce a valid Tool Call 3 times. Halting retries.",
                 "error",
               );
             }
@@ -734,23 +855,30 @@ export function useChatLogic(
             ? selectedQtypes[directorId]
             : undefined;
 
-          const routing = await browserEngine.runDirectorInference(
-            job.text,
-            directorInfo?.modelID,
-            (p) => {
-              if (p.status === "progress") {
-                setIsModelLoading(true);
-                setLoadingProgress((prev) => ({
-                  ...prev,
-                  [p.file]: {
-                    progress: p.progress,
-                    status: `Downloading Director...`,
-                  },
-                }));
-              }
-            },
-            directorCustomDtype,
-          );
+          let routing;
+          try {
+            routing = await browserEngine.runDirectorInference(
+              job.text,
+              directorInfo?.modelID,
+              (p) => {
+                if (p.status === "progress") {
+                  setIsModelLoading(true);
+                  setLoadingProgress((prev) => ({
+                    ...prev,
+                    [p.file]: {
+                      progress: p.progress,
+                      status: `Downloading Director...`,
+                    },
+                  }));
+                }
+              },
+              directorCustomDtype,
+            );
+          } catch (directorErr) {
+            console.error("Director routing failed:", directorErr);
+            addLog(`Director routing failed. Defaulting to text model.`, "error");
+            routing = { category: "text", prompt: job.text, thinking: "" };
+          }
 
           category = routing.category;
           finalInput = routing.prompt;
@@ -804,7 +932,7 @@ export function useChatLogic(
 
           let targetSystemPrompt = TEXT_SYSTEM_PROMPT;
           if (category === "coder" || category === "sandbox") {
-            targetSystemPrompt = CODER_SYSTEM_PROMPT;
+            targetSystemPrompt = getCoderSystemPrompt(currentStepIndex);
           } else if (category === "image-gen" || category === "image") {
             targetSystemPrompt = IMAGE_SYSTEM_PROMPT;
           } else if (category === "music-gen" || category === "music") {
@@ -856,11 +984,28 @@ export function useChatLogic(
 
         const chatHistory = [];
         let currentLength = 0;
-        const limit = contextMemoryLimit || 8192;
+        let limit = contextMemoryLimit || 8192;
+        
+        const actualTargetModelId =
+          job.category === "text"
+            ? selectedModels.text
+            : selectedModels[job.category] || selectedModels.text;
+        const actualTargetModelInfo = MODELS.find((m: any) => m.id === actualTargetModelId);
+        
+        if (actualTargetModelInfo && actualTargetModelInfo.maxContextChars) {
+           const modelTokenLimit = Math.floor(actualTargetModelInfo.maxContextChars / 4);
+           // Reserve 15% of context for system prompt and generation space
+           limit = Math.min(limit, Math.floor(modelTokenLimit * 0.85));
+        }
+
+        const isElectron = typeof window !== "undefined" && !!(window as any).electron;
+        if (!isElectron) {
+          limit = Math.min(limit, 4096);
+        }
 
         for (let i = filteredMessages.length - 1; i >= 0; i--) {
           const msg = filteredMessages[i];
-          const msgLength = (msg.content?.length || 0) + (msg.image ? 500 : 0); // Approximate image length if any
+          const msgLength = (msg.content?.length || 0) / 4 + (msg.image ? 125 : 0); // Approximate image length in tokens
           if (chatHistory.length > 0 && currentLength + msgLength > limit) {
             break;
           }
@@ -1083,31 +1228,16 @@ export function useChatLogic(
     setInput("");
     setPendingImage(null);
 
-    const userMsgId =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : Math.random().toString(36).substring(2, 11);
-    const assistantMsgId =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : Math.random().toString(36).substring(2, 11);
+    const currentModelId = isCoderMode ? selectedModels.coder : selectedModels[activeCategory] || selectedModels.text;
+    const currentModel = MODELS.find((m: any) => m.id === currentModelId);
+    const maxContext = currentModel?.maxContextChars || 8192;
+    // Chunk at 80% of maxContext to ensure room for system prompt and generation space
+    const chunkLimit = Math.floor(maxContext * 0.8);
 
-    const userMsg: Message = {
-      id: userMsgId,
-      role: "user",
-      content: currentInput,
-      image: currentImage || undefined,
-      timestamp: getFormattedTimestamp(),
-    };
-    const assistantMsg: Message = {
-      id: assistantMsgId,
-      role: "assistant",
-      content: "",
-      isQueued: true,
-      timestamp: getFormattedTimestamp(),
-    };
+    const chunks = currentImage ? [currentInput] : chunkText(currentInput, chunkLimit);
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    const newMessages: Message[] = [];
+    const jobs: any[] = [];
 
     let category = currentImage ? "vision" : isCoderMode ? "coder" : "text";
     if (!currentImage) {
@@ -1119,12 +1249,19 @@ export function useChatLogic(
         category = "vision";
       } else if (chatMode === "sandbox") {
         category = "coder";
+        if (setCurrentStepIndex && (currentStepIndex === -1 || currentStepIndex === undefined || currentStepIndex === 3)) {
+          setCurrentStepIndex(0);
+        }
       }
     }
 
     let systemPrompt = TEXT_SYSTEM_PROMPT;
+    let actualStepIndex = currentStepIndex;
     if (chatMode === "sandbox" || isCoderMode) {
-      systemPrompt = CODER_SYSTEM_PROMPT;
+      if (chatMode === "sandbox" && (currentStepIndex === -1 || currentStepIndex === undefined || currentStepIndex === 3)) {
+        actualStepIndex = 0;
+      }
+      systemPrompt = getCoderSystemPrompt(actualStepIndex);
     } else if (chatMode === "image") {
       systemPrompt = IMAGE_SYSTEM_PROMPT;
     } else if (chatMode === "music") {
@@ -1140,26 +1277,54 @@ export function useChatLogic(
       systemPrompt = gemma4TextSystemPrompt;
     }
 
-    const job = {
-      id:
+    chunks.forEach((chunkTextItem, index) => {
+      const userMsgId =
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
-          : Math.random().toString(36).substring(2, 11),
-      category,
-      chatMode,
-      text: currentImage || currentInput,
-      options: {
-        prompt: currentImage ? currentInput : undefined,
-        systemPrompt,
-      },
-      userMsgId,
-      assistantMsgId,
-      isDirector: chatMode === "director" && !currentImage,
-      isInternal: false,
-    };
+          : Math.random().toString(36).substring(2, 11);
+      const assistantMsgId =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : Math.random().toString(36).substring(2, 11);
 
-    pushJob(job);
-  }, [input, pendingImage, isCoderMode, chatMode, pushJob]);
+      newMessages.push({
+        id: userMsgId,
+        role: "user",
+        content: chunkTextItem,
+        image: index === 0 && currentImage ? currentImage : undefined,
+        timestamp: getFormattedTimestamp(),
+      });
+      
+      newMessages.push({
+        id: assistantMsgId,
+        role: "assistant",
+        content: "",
+        isQueued: true,
+        timestamp: getFormattedTimestamp(),
+      });
+
+      jobs.push({
+        id:
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : Math.random().toString(36).substring(2, 11),
+        category,
+        chatMode,
+        text: index === 0 && currentImage ? currentImage : chunkTextItem,
+        options: {
+          prompt: index === 0 && currentImage ? chunkTextItem : undefined,
+          systemPrompt,
+        },
+        userMsgId,
+        assistantMsgId,
+        isDirector: chatMode === "director" && !currentImage,
+        isInternal: false,
+      });
+    });
+
+    setMessages((prev) => [...prev, ...newMessages]);
+    jobs.forEach(job => pushJob(job));
+  }, [input, pendingImage, isCoderMode, chatMode, pushJob, selectedModels, activeCategory, currentStepIndex, setCurrentStepIndex]);
 
   const handleSendInternal = useCallback(
     async (

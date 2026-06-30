@@ -36,6 +36,8 @@ export function Sidebar({
     setTopP,
     topK,
     setTopK,
+    inactivityTimeout,
+    setInactivityTimeout,
     enableRAG,
     setEnableRAG,
     speakEnabled,
@@ -524,6 +526,23 @@ export function Sidebar({
                 onValueChange={(val) => setTopK(val[0])} 
                 max={100} 
                 min={1} 
+                step={1}
+                className="py-1"
+              />
+            </div>
+            
+            <div className="space-y-3 relative pt-1 pb-2">
+              <div className="flex justify-between text-[9px] font-mono uppercase text-muted-foreground/70 tracking-tighter">
+                <span>INACTIVITY TIMEOUT</span>
+                <span className="text-orange-500 font-bold tracking-normal">
+                  {inactivityTimeout === 0 ? "DISABLED" : `${inactivityTimeout} MIN`}
+                </span>
+              </div>
+              <Slider 
+                value={[inactivityTimeout]} 
+                onValueChange={(val) => setInactivityTimeout(val[0])} 
+                max={120} 
+                min={0} 
                 step={1}
                 className="py-1"
               />
