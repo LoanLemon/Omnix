@@ -16,6 +16,7 @@ import {
   formatMemoriesAsTable,
   distillMemories,
   formatConversationTranscript,
+  getToneInstruction,
 } from "@shared/prompts";
 
 export const getFormattedTimestamp = () => {
@@ -377,6 +378,19 @@ export function useChatLogic(
         }
 
         finalSystemPrompt = options.systemPrompt || "";
+        const savedOcean = (() => {
+          try {
+            const saved = localStorage.getItem("breamu_ocean_personality");
+            if (saved) return JSON.parse(saved);
+          } catch (e) {}
+          return undefined;
+        })();
+        if (savedOcean && (category === "text" || category === "vision" || category === "coder")) {
+          const personalityBlock = getToneInstruction(savedOcean);
+          if (personalityBlock) {
+            finalSystemPrompt = `${personalityBlock}\n\n${finalSystemPrompt}`;
+          }
+        }
         const timeStr = `[Current Time & Date: ${getFormattedTimestamp()}]`;
         finalSystemPrompt = finalSystemPrompt
           ? `${timeStr}\n\n${finalSystemPrompt}`
@@ -585,6 +599,11 @@ export function useChatLogic(
                       "",
                     );
                     finalContent = finalContent.trim();
+                    if (!finalContent && (m.content || result)) {
+                      finalContent = m.content || result || "";
+                      // remove unclosed tags at the end for display if needed
+                      finalContent = finalContent.replace(/<think>|<\|channel>thought/gi, "").trim();
+                    }
                     if (flushSpeech) {
                       flushSpeech(finalContent);
                     }
@@ -619,6 +638,9 @@ export function useChatLogic(
             cleanResult = cleanResult
               .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "")
               .trim();
+            if (!cleanResult && result) {
+               cleanResult = result.replace(/<think>|<\|channel>thought/gi, "").trim();
+            }
 
             const toolCalls = parseMarkdownToolCalls(cleanResult);
 
@@ -772,6 +794,9 @@ export function useChatLogic(
             cleanResult = cleanResult
               .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "")
               .trim();
+            if (!cleanResult && result) {
+               cleanResult = result.replace(/<think>|<\|channel>thought/gi, "").trim();
+            }
             indexMemory(cleanResult, "AI", "Output");
           }
         }

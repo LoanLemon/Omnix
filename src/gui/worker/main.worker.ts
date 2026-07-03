@@ -240,7 +240,6 @@ export class WorkerModelEngine {
     this.processor = null;
     this.currentModelId = null;
     this.currentDtype = null;
-    this.isBusy = false;
     // Settle time for GC and webgpu cache release
     await new Promise(resolve => setTimeout(resolve, 300));
   }
@@ -310,7 +309,7 @@ export class WorkerModelEngine {
     let finalDtype = dtype.toLowerCase();
 
     const isJanus = info.id.toLowerCase().includes("janus");
-    const deviceChoice = isJanus ? {
+    const deviceChoice = (isJanus && !this.isLowMemory) ? {
       prepare_inputs_embeds: 'wasm',
       language_model: 'webgpu',
       lm_head: 'webgpu',
@@ -393,7 +392,12 @@ export class WorkerModelEngine {
         errMsg.includes("Aborted") || 
         errMsg.includes("OOM") ||
         errMsg.includes("bad_alloc") ||
-        errMsg.includes("Unexpected internal error");
+        errMsg.includes("Unexpected internal error") ||
+        errMsg.toLowerCase().includes("session") ||
+        errMsg.toLowerCase().includes("graph_utils") ||
+        errMsg.toLowerCase().includes("fusion") ||
+        errMsg.toLowerCase().includes("create a session") ||
+        errMsg.toLowerCase().includes("failed to create");
 
       const isDeviceWebGPU = typeof commonOptions.device === "string" 
         ? commonOptions.device === "webgpu"
@@ -452,21 +456,23 @@ export class WorkerModelEngine {
   async runInference(category: string, input: any, options: any = {}, sendProgress?: (p: any) => void, onToken?: (token: string) => void) {
     if (this.isBusy) throw new Error("Engine Busy");
     this.isBusy = true;
-    try {
-      let modelId = options.modelId;
-      if (!modelId && this.currentModelId) {
-        const [curCategory, curModelId] = this.currentModelId.split(":");
-        if (curCategory === category) {
-          modelId = curModelId;
-        }
+
+    let modelId = options.modelId;
+    if (!modelId && this.currentModelId) {
+      const [curCategory, curModelId] = this.currentModelId.split(":");
+      if (curCategory === category) {
+        modelId = curModelId;
       }
-      if (!modelId) {
-        modelId = this.getDefaultModel(category);
-      } else {
-        const resolved = normalizeAndRegisterModel(modelId, category as any);
-        modelId = resolved.id;
-        options.modelId = resolved.id;
-      }
+    }
+    if (!modelId) {
+      modelId = this.getDefaultModel(category);
+    } else {
+      const resolved = normalizeAndRegisterModel(modelId, category as any);
+      modelId = resolved.id;
+      options.modelId = resolved.id;
+    }
+
+    const executeInferenceBody = async () => {
       await this.loadModel(category, modelId, sendProgress, options.qtype);
 
       let parsedMaxTokens: number | undefined;
@@ -476,6 +482,11 @@ export class WorkerModelEngine {
       }
 
       let maxTokens = this.isLowMemory ? 256 : (parsedMaxTokens || 512);
+
+      const isLfm2 = modelId && modelId.toLowerCase().includes("lfm2");
+      if (isLfm2) {
+        maxTokens = Math.max(maxTokens, this.isLowMemory ? 768 : 1280);
+      }
 
       const capacity = this.getModelCapacity();
       if (maxTokens > capacity) {
@@ -507,7 +518,56 @@ export class WorkerModelEngine {
 
       // 5. Default Text / Chat Mode
       return await handleTextInference(this, category, input, options, maxTokens, sendProgress, onToken);
+    };
 
+    try {
+      return await executeInferenceBody();
+    } catch (err: any) {
+      const errMsg = String(err);
+      const isSessionOrMemoryError = 
+        errMsg.includes("11514632") || 
+        errMsg.includes("7503920") || 
+        errMsg.includes("Aborted") || 
+        errMsg.includes("OOM") ||
+        errMsg.includes("bad_alloc") ||
+        errMsg.includes("Unexpected internal error") ||
+        errMsg.toLowerCase().includes("session") ||
+        errMsg.toLowerCase().includes("graph_utils") ||
+        errMsg.toLowerCase().includes("fusion") ||
+        errMsg.toLowerCase().includes("create a session") ||
+        errMsg.toLowerCase().includes("failed to create") ||
+        errMsg.toLowerCase().includes("webgpu") ||
+        errMsg.toLowerCase().includes("lost") ||
+        errMsg.toLowerCase().includes("device");
+
+      if (isSessionOrMemoryError) {
+        console.warn(`⚠️ (Worker) Inference execution failed with session/memory error: ${errMsg}. Retrying with WASM/Safe mode fallback...`);
+        
+        // Force WASM fallback and low memory mode
+        this.isLowMemory = true;
+        env.useBrowserCache = false;
+        // @ts-ignore
+        if (env.backends?.onnx?.wasm) {
+          env.backends.onnx.wasm.numThreads = 1;
+        }
+
+        // Force unload the failed model to clear corrupt sessions
+        await this.clearHeavy();
+        await this.forceUnloadDirector();
+        this.currentModelId = null;
+
+        // Force safe dtype
+        options.qtype = "q4";
+
+        try {
+          // Reload model under WASM/Safe mode and retry
+          return await executeInferenceBody();
+        } catch (retryErr: any) {
+          throw new Error(`Engine Total Failure in inference retry: ${String(retryErr)}`);
+        }
+      } else {
+        throw err;
+      }
     } finally {
       this.isBusy = false;
     }
@@ -586,19 +646,43 @@ self.addEventListener("message", async (e: MessageEvent) => {
         break;
       }
       case "loadModel": {
-        await engine.loadModel(payload.category, payload.modelId, (p) => {
-          self.postMessage({ type: "progress", requestId, progress: p });
-        }, payload.customDtype);
+        while (engine.isBusy) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        engine.isBusy = true;
+        try {
+          await engine.loadModel(payload.category, payload.modelId, (p) => {
+            self.postMessage({ type: "progress", requestId, progress: p });
+          }, payload.customDtype);
+        } finally {
+          engine.isBusy = false;
+        }
         self.postMessage({ type: "complete", requestId });
         break;
       }
       case "unloadDirector": {
-        await engine.unloadDirector();
+        while (engine.isBusy) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        engine.isBusy = true;
+        try {
+          await engine.unloadDirector();
+        } finally {
+          engine.isBusy = false;
+        }
         self.postMessage({ type: "complete", requestId });
         break;
       }
       case "clear": {
-        await engine.clear();
+        while (engine.isBusy) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        engine.isBusy = true;
+        try {
+          await engine.clear();
+        } finally {
+          engine.isBusy = false;
+        }
         self.postMessage({ type: "complete", requestId });
         break;
       }
@@ -608,20 +692,46 @@ self.addEventListener("message", async (e: MessageEvent) => {
         break;
       }
       case "runDirectorInference": {
-        const res = await runDirectorInference(engine, payload.input, payload.modelId, (p) => {
-          self.postMessage({ type: "progress", requestId, progress: p });
-        }, payload.customDtype);
-        self.postMessage({ type: "complete", requestId, result: res });
+        while (engine.isBusy) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        engine.isBusy = true;
+        try {
+          const res = await runDirectorInference(engine, payload.input, payload.modelId, (p) => {
+            self.postMessage({ type: "progress", requestId, progress: p });
+          }, payload.customDtype);
+          self.postMessage({ type: "complete", requestId, result: res });
+        } finally {
+          engine.isBusy = false;
+        }
         break;
       }
       case "getEmbedding": {
-        const res = await getEmbedding(engine, payload.text, (p) => {
-          self.postMessage({ type: "progress", requestId, progress: p });
-        });
-        self.postMessage({ type: "complete", requestId, result: res });
+        while (engine.isBusy) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        engine.isBusy = true;
+        try {
+          const res = await getEmbedding(engine, payload.text, (p) => {
+            self.postMessage({ type: "progress", requestId, progress: p });
+          });
+          self.postMessage({ type: "complete", requestId, result: res });
+        } finally {
+          engine.isBusy = false;
+        }
+        break;
+      }
+      case "cancelInference": {
+        if (!(engine as any).abortFlags) (engine as any).abortFlags = {};
+        (engine as any).abortFlags[payload.requestId] = true;
         break;
       }
       case "runInference": {
+        while (engine.isBusy) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        payload.options = payload.options || {};
+        payload.options.abortId = requestId;
         const res = await engine.runInference(
           payload.category,
           payload.input,

@@ -6,7 +6,10 @@ import cors from "cors";
 import multer from "multer";
 import { createServer } from "http";
 import open from "open";
+import fs from "fs";
+import sharp from "sharp";
 import { setupWebSockets, dispatchTask, handleHealthCheck, archiveReqIdHistory, purgeReqIdHistory } from "./src/engine/socketHandler.ts";
+import { setupLiveApiSocket } from "./src/engine/liveHandler.ts";
 import { MODELS } from "./src/shared/modelList.ts";
 
 process.on('uncaughtException', (err) => {
@@ -26,6 +29,32 @@ const isSilent = args.includes("--silent") || process.env.NODE_ENV === "producti
 const pidArgIndex = args.indexOf("--dependent-pid");
 const dependentPid = pidArgIndex !== -1 ? parseInt(args[pidArgIndex + 1]) : null;
 
+// Determine if we are running in a cloud/container environment where external proxy needs 0.0.0.0
+const isContainer = !!(process.env.K_SERVICE || process.env.GAE_SERVICE || process.env.PORT === "3000" || process.env.NODE_ENV === "production");
+
+// Read local config file for allowed global access
+let allowRemoteFromConfig = false;
+try {
+  const configPath = path.join(process.cwd(), "omnix-config.json");
+  if (fs.existsSync(configPath)) {
+    const configData = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    if (configData.allowRemote || configData.globalAccess) {
+      allowRemoteFromConfig = true;
+    }
+  }
+} catch (e) {
+  // Ignore error
+}
+
+const isGlobalAccessEnabled = 
+  process.env.ALLOW_REMOTE === "true" || 
+  process.env.OMNIX_GLOBAL_ACCESS === "true" || 
+  args.includes("--allow-remote") || 
+  args.includes("--global") || 
+  allowRemoteFromConfig;
+
+const HOST = (isContainer || isGlobalAccessEnabled) ? "0.0.0.0" : "127.0.0.1";
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 async function startServer() {
@@ -33,16 +62,33 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
   
+  // Setup Live API Socket
+  const liveWss = setupLiveApiSocket();
+  
   // Initialize WebSockets (Relay Mode) - ONLY IF EXPLICITLY ENABLED OR IN CERTAIN ENVIRONMENTS
   const isElectron = !!process.versions.electron;
   let relayActive = false;
+  let relayWss: any = null;
 
   const startRelay = () => {
     if (relayActive) return;
     console.log("📡 Setting up WebSockets (Relay Mode Enabled)...");
-    setupWebSockets(server);
+    relayWss = setupWebSockets();
     relayActive = true;
   };
+  server.on('upgrade', (request, socket, head) => {
+    const pathname = request.url ? new URL(request.url, 'http://localhost').pathname : '';
+
+    if (pathname === '/api/live') {
+      liveWss.handleUpgrade(request, socket, head, (ws: any) => {
+        liveWss.emit('connection', ws, request);
+      });
+    } else if (pathname === '/ws-active-compute' && relayWss) {
+      relayWss.handleUpgrade(request, socket, head, (ws: any) => {
+        relayWss.emit('connection', ws, request);
+      });
+    }
+  });
 
   // In standard browser mode (Cloud Run/AI Studio), we don't start the relay by default 
   // as per user request to avoid server overhead.
@@ -72,10 +118,24 @@ async function startServer() {
   });
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-  app.use(express.text({ type: '*/*', limit: '50mb' }));
+  app.use(express.text({ 
+    type: (req) => {
+      const contentType = req.headers['content-type'] || '';
+      return !contentType.includes('multipart/form-data');
+    }, 
+    limit: '50mb' 
+  }));
 
   // Normalization middleware to parse stringified JSON or urlencoded JSON from PowerShell/clients
-  app.use((req, res, next) => {
+  app.use((req: any, res: any, next: any) => {
+    const abortController = new AbortController();
+    req.abortSignal = abortController.signal;
+
+    // We do not bind to req.on("aborted") or res.on("close") to abort the controller
+    // because proxies like Cloud Run can occasionally drop or close connections 
+    // prematurely during long-running inference requests, which would incorrectly 
+    // cancel the background task.
+
     if (typeof req.body === "string") {
       const trimmed = req.body.trim();
       if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
@@ -121,6 +181,41 @@ async function startServer() {
       return res.json({ status: "ok", message: "Relay started" });
     }
     res.json({ status: "ok", relayActive });
+  });
+
+  app.get("/api/server/config", (req, res) => {
+    res.json({
+      port: PORT,
+      host: HOST,
+      isGlobalAccessEnabled,
+      isContainer
+    });
+  });
+
+  app.post("/api/server/config", (req, res) => {
+    try {
+      const { allowRemote } = req.body;
+      const configPath = path.join(process.cwd(), "omnix-config.json");
+      
+      let configData: any = {};
+      try {
+        if (fs.existsSync(configPath)) {
+          configData = JSON.parse(fs.readFileSync(configPath, "utf8"));
+        }
+      } catch (e) {}
+
+      configData.allowRemote = !!allowRemote;
+      
+      fs.writeFileSync(configPath, JSON.stringify(configData, null, 2), "utf8");
+      
+      res.json({ 
+        success: true, 
+        message: "Configuration saved successfully. Please restart the Omnix API server to apply changes.",
+        config: configData
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/server/status", (req, res) => {
@@ -180,6 +275,9 @@ async function startServer() {
       let top_k = req.body.top_k;
       let maxTokens = req.body.maxTokens;
 
+      let isolatedRAG = req.body.isolatedRAG;
+      let ocean = req.body.ocean;
+
       if (req.body.model && typeof req.body.model === "object") {
         modelId = req.body.model.id || modelId;
         qtype = req.body.model.qtype || qtype;
@@ -193,6 +291,13 @@ async function startServer() {
         qtype = "q4f16";
       }
 
+      if (!ocean) {
+        const { openness, conscientiousness, extraversion, agreeableness, neuroticism } = req.body;
+        if (openness !== undefined || conscientiousness !== undefined || extraversion !== undefined || agreeableness !== undefined || neuroticism !== undefined) {
+          ocean = { openness, conscientiousness, extraversion, agreeableness, neuroticism };
+        }
+      }
+
       if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
       const origin = req.headers.origin || req.headers.referer || "unknown";
@@ -202,7 +307,20 @@ async function startServer() {
       console.log(`   - Model: ${modelId || 'auto-selected (default)'}`);
       console.log(`   - Origin: ${origin}`);
       
-      const output = await dispatchTask("text", prompt, { systemPrompt, modelId, qtype, origin, reqId, temperature, top_p, top_k, maxTokens });
+      const output = await dispatchTask("text", prompt, { 
+        systemPrompt, 
+        modelId, 
+        qtype, 
+        origin, 
+        reqId, 
+        temperature, 
+        top_p, 
+        top_k, 
+        maxTokens,
+        isolatedRAG,
+        ocean,
+        abortSignal: (req as any).abortSignal
+      });
       
       let cleanResponse = output;
       let thinkText: string | undefined = undefined;
@@ -213,12 +331,20 @@ async function startServer() {
         if (match) {
           thinkText = match[1].trim();
           cleanResponse = output.replace(thinkRegex, "").trim();
+          if (!cleanResponse) {
+            cleanResponse = thinkText;
+            thinkText = undefined;
+          }
         } else {
           const thoughtRegex = /<\|channel>thought\n([\s\S]*?)(?:<channel\|>|$)/i;
           const thoughtMatch = output.match(thoughtRegex);
           if (thoughtMatch) {
             thinkText = thoughtMatch[1].trim();
             cleanResponse = output.replace(thoughtRegex, "").trim();
+            if (!cleanResponse) {
+              cleanResponse = thinkText;
+              thinkText = undefined;
+            }
           }
         }
       }
@@ -245,7 +371,7 @@ async function startServer() {
       console.log(`\n🚀 [API] Processing Director Request [reqId: ${reqId || 'none'}]`);
       console.log(`   - Origin: ${origin}`);
       
-      const intent = await dispatchTask("director", prompt, { origin, reqId });
+      const intent = await dispatchTask("director", prompt, { origin, reqId, abortSignal: (req as any).abortSignal });
       res.json({ intent, prompt });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -272,6 +398,46 @@ async function startServer() {
     return res.status(400).json({ error: "reqId is required" });
   });
 
+  // Inject background story / lore into isolated RAG memory store
+  app.post(["/api/injectRAG", "/api/inject-rag"], async (req, res) => {
+    try {
+      const { isolatedRAG, text, metadata } = req.body;
+      const reqId = req.body.reqId || req.query.reqId || req.headers?.["x-req-id"] || req.headers?.["reqid"];
+      
+      let targetRAG: string | undefined = undefined;
+      if (isolatedRAG === true || String(isolatedRAG).toLowerCase() === "true") {
+        targetRAG = reqId ? String(reqId) : undefined;
+      } else if (isolatedRAG !== undefined && isolatedRAG !== null && isolatedRAG !== "") {
+        targetRAG = String(isolatedRAG);
+      } else if (reqId) {
+        targetRAG = String(reqId);
+      }
+
+      if (!targetRAG) {
+        return res.status(400).json({ error: "isolatedRAG or reqId is required to specify the isolation session" });
+      }
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ error: "text parameter is required and must be a string" });
+      }
+
+      console.log(`\n📥 [API] Injecting RAG entry for isolatedRAG/reqId: ${targetRAG}`);
+      
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      
+      const result = await dispatchTask("inject-rag", text, { 
+        isolatedRAG: targetRAG,
+        metadata: metadata || {},
+        origin,
+        reqId,
+        abortSignal: (req as any).abortSignal
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Vision Analysis
   app.post("/api/vision", upload.single("image"), async (req: any, res) => {
     try {
@@ -282,6 +448,17 @@ async function startServer() {
       let top_p = req.body.top_p;
       let top_k = req.body.top_k;
       let maxTokens = req.body.maxTokens;
+
+      let isolatedRAG = req.body.isolatedRAG;
+      let ocean = req.body.ocean;
+
+      if (typeof ocean === "string") {
+        try {
+          ocean = JSON.parse(ocean);
+        } catch (e) {
+          // ignore
+        }
+      }
 
       if (req.body.model && typeof req.body.model === "object") {
         modelId = req.body.model.id || modelId;
@@ -296,6 +473,19 @@ async function startServer() {
         qtype = "q4f16";
       }
 
+      if (!ocean) {
+        const { openness, conscientiousness, extraversion, agreeableness, neuroticism } = req.body;
+        if (openness !== undefined || conscientiousness !== undefined || extraversion !== undefined || agreeableness !== undefined || neuroticism !== undefined) {
+          ocean = {
+            openness: openness !== undefined ? Number(openness) : undefined,
+            conscientiousness: conscientiousness !== undefined ? Number(conscientiousness) : undefined,
+            extraversion: extraversion !== undefined ? Number(extraversion) : undefined,
+            agreeableness: agreeableness !== undefined ? Number(agreeableness) : undefined,
+            neuroticism: neuroticism !== undefined ? Number(neuroticism) : undefined
+          };
+        }
+      }
+
       const file = req.file;
       if (!file) return res.status(400).json({ error: "Image is required" });
 
@@ -307,7 +497,20 @@ async function startServer() {
       console.log(`   - Origin: ${origin}`);
       
       const base64Image = `data:image/jpeg;base64,${file.buffer.toString('base64')}`;
-      const response = await dispatchTask("vision", base64Image, { prompt, modelId, qtype, origin, reqId, temperature, top_p, top_k, maxTokens });
+      const response = await dispatchTask("vision", base64Image, { 
+        prompt, 
+        modelId, 
+        qtype, 
+        origin, 
+        reqId, 
+        temperature, 
+        top_p, 
+        top_k, 
+        maxTokens,
+        isolatedRAG,
+        ocean,
+        abortSignal: (req as any).abortSignal
+      });
 
       let cleanResponse = response;
       let thinkText: string | undefined = undefined;
@@ -318,12 +521,20 @@ async function startServer() {
         if (match) {
           thinkText = match[1].trim();
           cleanResponse = response.replace(thinkRegex, "").trim();
+          if (!cleanResponse) {
+            cleanResponse = thinkText;
+            thinkText = undefined;
+          }
         } else {
           const thoughtRegex = /<\|channel>thought\n([\s\S]*?)(?:<channel\|>|$)/i;
           const thoughtMatch = response.match(thoughtRegex);
           if (thoughtMatch) {
             thinkText = thoughtMatch[1].trim();
             cleanResponse = response.replace(thoughtRegex, "").trim();
+            if (!cleanResponse) {
+              cleanResponse = thinkText;
+              thinkText = undefined;
+            }
           }
         }
       }
@@ -352,7 +563,7 @@ async function startServer() {
       console.log(`   - Origin: ${origin}`);
       
       const base64Audio = file.buffer.toString('base64');
-      const text = await dispatchTask("stt", base64Audio, { origin, reqId });
+      const text = await dispatchTask("stt", base64Audio, { origin, reqId, abortSignal: (req as any).abortSignal });
 
       res.json({ text });
     } catch (error: any) {
@@ -360,10 +571,51 @@ async function startServer() {
     }
   });
 
+  function encodeWAV(samples: number[], sampleRate: number = 24000): Buffer {
+    const buffer = Buffer.alloc(44 + samples.length * 2);
+    
+    // RIFF identifier
+    buffer.write('RIFF', 0);
+    // file length minus RIFF header
+    buffer.writeUInt32LE(36 + samples.length * 2, 4);
+    // RIFF type
+    buffer.write('WAVE', 8);
+    // format chunk identifier
+    buffer.write('fmt ', 12);
+    // format chunk length
+    buffer.writeUInt32LE(16, 16);
+    // sample format (raw PCM = 1)
+    buffer.writeUInt16LE(1, 20);
+    // channel count (mono = 1)
+    buffer.writeUInt16LE(1, 22);
+    // sample rate
+    buffer.writeUInt32LE(sampleRate, 24);
+    // byte rate (sample rate * block align)
+    buffer.writeUInt32LE(sampleRate * 2, 28);
+    // block align (channel count * bytes per sample)
+    buffer.writeUInt16LE(2, 32);
+    // bits per sample (16-bit)
+    buffer.writeUInt16LE(16, 34);
+    // data chunk identifier
+    buffer.write('data', 36);
+    // data chunk length
+    buffer.writeUInt32LE(samples.length * 2, 40);
+
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      const intSample = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      buffer.writeInt16LE(Math.floor(intSample), offset);
+      offset += 2;
+    }
+
+    return buffer;
+  }
+
   // Text-to-Speech
   app.post("/api/tts", async (req, res) => {
     try {
-      const { text, voiceID, voiceId, modelId } = req.body;
+      const { text, voiceID, voiceId, modelId, format } = req.body;
       if (!text) return res.status(400).json({ error: "Text is required" });
 
       const origin = req.headers.origin || req.headers.referer || "unknown";
@@ -375,7 +627,28 @@ async function startServer() {
       console.log(`   - Voice Model: ${selectedVoice}`);
       console.log(`   - Origin: ${origin}`);
 
-      const output = await dispatchTask("tts", text, { voiceID: selectedVoice, origin, reqId });
+      const output = await dispatchTask("tts", text, { voiceID: selectedVoice, origin, reqId, abortSignal: (req as any).abortSignal });
+      
+      if (output && output.audio) {
+        const samples = Array.isArray(output.audio) ? output.audio : Object.values(output.audio) as number[];
+        const sampleRate = output.sampling_rate || 24000;
+        const wavBuffer = encodeWAV(samples, sampleRate);
+        
+        const wantWav = format === "wav" || req.query?.format === "wav" || req.headers.accept?.includes("audio/wav");
+        
+        if (wantWav) {
+          res.setHeader("Content-Type", "audio/wav");
+          res.setHeader("Content-Disposition", "attachment; filename=\"speech.wav\"");
+          return res.send(wavBuffer);
+        } else {
+          return res.json({
+            audio: samples,
+            sampling_rate: sampleRate,
+            wav_base64: wavBuffer.toString("base64")
+          });
+        }
+      }
+      
       res.json(output);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -407,8 +680,59 @@ async function startServer() {
       console.log(`   - Model: ${modelId || 'auto-selected (default)'}`);
       console.log(`   - Origin: ${origin}`);
       
-      const image = await dispatchTask("image-gen", prompt, { modelId, qtype, origin, reqId });
-      res.json({ status: "success", image });
+      const image = await dispatchTask("image-gen", prompt, { modelId, qtype, origin, reqId, abortSignal: (req as any).abortSignal });
+      
+      let finalImage = image;
+      if (image && image.__serialized_type__ === "RawImage" && image.data) {
+        const width = image.width;
+        const height = image.height;
+        const numPixels = width * height;
+        const rawData = image.data;
+        let rgbaData: Buffer;
+        
+        if (rawData.length === numPixels * 4) {
+          rgbaData = Buffer.from(rawData);
+        } else if (rawData.length === numPixels * 3) {
+          rgbaData = Buffer.alloc(numPixels * 4);
+          for (let i = 0; i < numPixels; ++i) {
+            rgbaData[i * 4] = rawData[i * 3];
+            rgbaData[i * 4 + 1] = rawData[i * 3 + 1];
+            rgbaData[i * 4 + 2] = rawData[i * 3 + 2];
+            rgbaData[i * 4 + 3] = 255;
+          }
+        } else if (rawData.length === numPixels) {
+          rgbaData = Buffer.alloc(numPixels * 4);
+          for (let i = 0; i < numPixels; ++i) {
+            const val = rawData[i];
+            rgbaData[i * 4] = val;
+            rgbaData[i * 4 + 1] = val;
+            rgbaData[i * 4 + 2] = val;
+            rgbaData[i * 4 + 3] = 255;
+          }
+        } else {
+          rgbaData = Buffer.alloc(numPixels * 4);
+          const copyLen = Math.min(rawData.length, numPixels * 4);
+          rgbaData.set(Buffer.from(rawData.slice(0, copyLen)));
+          for (let i = Math.floor(copyLen / 4); i < numPixels; ++i) {
+            rgbaData[i * 4 + 3] = 255;
+          }
+        }
+        
+        try {
+          const pngBuffer = await sharp(rgbaData, {
+            raw: {
+              width,
+              height,
+              channels: 4
+            }
+          }).png().toBuffer();
+          finalImage = "data:image/png;base64," + pngBuffer.toString('base64');
+        } catch (e) {
+          console.error("Failed to process RawImage with sharp:", e);
+        }
+      }
+
+      res.json({ status: "success", image: finalImage });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -441,7 +765,7 @@ async function startServer() {
       console.log(`   - Model: ${modelId || 'auto-selected (default)'}`);
       console.log(`   - Origin: ${origin}`);
       
-      const output = await dispatchTask("music-gen", prompt, { modelId, qtype, origin, reqId, maxTokens });
+      const output = await dispatchTask("music-gen", prompt, { modelId, qtype, origin, reqId, maxTokens, abortSignal: (req as any).abortSignal });
       res.json({ status: "success", ...output });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -478,9 +802,15 @@ async function startServer() {
     }
   });
 
-  server.listen(PORT, "0.0.0.0", async () => {
+  server.listen(PORT, HOST, async () => {
     console.log(`🚀 Omnix Brain Active [PID: ${process.pid}] on port ${PORT}`);
-    console.log(`🤖 Local API available at http://localhost:${PORT}/api`);
+    console.log(`🤖 Local API available at http://${HOST === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1"}:${PORT}/api`);
+    if (HOST === "127.0.0.1") {
+      console.log(`🔒 Secure Local-Only Mode active (connections restricted to localhost).`);
+      console.log(`💡 To allow other network/global devices to connect, run with ALLOW_REMOTE=true or add "allowRemote": true in omnix-config.json`);
+    } else {
+      console.log(`🌍 LAN/WAN Remote Access Mode active (listening on all network interfaces).`);
+    }
     
     // Only launch GUI if we are definitely local and not silent
     const isLocal = !process.env.K_SERVICE && !process.env.GAE_SERVICE; // Cloud Run / App Engine check

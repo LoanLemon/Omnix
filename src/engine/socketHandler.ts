@@ -138,10 +138,9 @@ function requeueTask(task: any) {
   }
 }
 
-export function setupWebSockets(server: any) {
+export function setupWebSockets() {
   const wss = new WebSocketServer({ 
-    server,
-    path: "/ws-active-compute" 
+    noServer: true
   });
   globalWss = wss;
 
@@ -424,12 +423,46 @@ export async function dispatchTask(category: string, input: any, options: any = 
       }
     }, 30000); 
 
+    const handleAbort = () => {
+      const idx = taskQueue.findIndex(t => t.requestId === requestId);
+      if (idx >= 0) {
+        taskQueue.splice(idx, 1);
+        clearTimeout(queueTimeout);
+        console.log(`🚫 Task ${requestId} aborted in queue by client.`);
+        reject(new Error("Request aborted by client."));
+      } else {
+        const pending = pendingTasks.get(requestId);
+        if (pending) {
+          clearTimeout(pending.timeout);
+          pendingTasks.delete(requestId);
+          const worker = workers.find(w => w.id === pending.workerId);
+          if (worker) {
+            worker.ws.send(JSON.stringify({ type: "CANCEL_TASK", requestId }));
+            console.log(`🚫 Task ${requestId} aborted while running. Sent CANCEL_TASK to worker.`);
+            processQueue();
+          }
+          reject(new Error("Request aborted by client."));
+        }
+      }
+    };
+
+    if (options.abortSignal) {
+      options.abortSignal.addEventListener("abort", handleAbort);
+    }
+
+    const cleanupAbort = () => {
+      if (options.abortSignal) {
+        options.abortSignal.removeEventListener("abort", handleAbort);
+      }
+    };
+
     taskQueue.push({ 
       category, 
       input, 
       options, 
       resolve: (data: any) => { 
         clearTimeout(queueTimeout); 
+        cleanupAbort();
         if (reqId && (category === "text" || category === "vision")) {
           const history = reqIdChatHistories.get(reqId) || [];
           const userContent = category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : masonStringify(input, 0, undefined, { compact: true }));
@@ -458,6 +491,7 @@ export async function dispatchTask(category: string, input: any, options: any = 
       }, 
       reject: (err: any) => { 
         clearTimeout(queueTimeout); 
+        cleanupAbort();
         if (reqId) {
           const nId = Number(reqId);
           if (!isNaN(nId) && nId < 0) {

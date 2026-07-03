@@ -1,9 +1,369 @@
 import React, { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Terminal, Code2, Globe, Zap, Image as ImageIcon, Music, Bot, Mic, Volume2, Activity } from "lucide-react";
+import { Terminal, Code2, Globe, Zap, Image as ImageIcon, Music, Bot, Mic, Volume2, Activity, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+
+interface ParamInfo {
+  field: string;
+  type: string;
+  presence: "Required" | "Optional" | "Implicit";
+  description: React.ReactNode;
+}
+
+interface ParameterSchemaTableProps {
+  parameters: ParamInfo[];
+  borderType?: "normal" | "accent";
+}
+
+function ParameterSchemaTable({ parameters, borderType = "normal" }: ParameterSchemaTableProps) {
+  const [showOptional, setShowOptional] = useState(false);
+
+  const requiredParams = parameters.filter((p) => p.presence === "Required" || p.presence === "Implicit");
+  const optionalParams = parameters.filter((p) => p.presence === "Optional");
+
+  const borderClass = borderType === "accent" ? "border-zinc-900 bg-zinc-950/70" : "border-zinc-800 bg-zinc-950";
+
+  return (
+    <div className="space-y-3">
+      <div className={`border rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45 ${borderClass}`}>
+        <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
+          <div className="col-span-3">Field</div>
+          <div className="col-span-3">Type / Presence</div>
+          <div className="col-span-6">Description</div>
+        </div>
+
+        {/* Required/Implicit parameters */}
+        {requiredParams.map((param, index) => (
+          <div key={index} className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
+            <div className="col-span-3 text-orange-500">{param.field}</div>
+            <div className="col-span-3 text-zinc-400">
+              {param.type} • <span className="text-emerald-500 font-semibold">{param.presence}</span>
+            </div>
+            <div className="col-span-6 text-zinc-500">{param.description}</div>
+          </div>
+        ))}
+
+        {requiredParams.length === 0 && (
+          <div className="grid grid-cols-12 gap-4 py-3 text-zinc-500 italic text-center">
+            <div className="col-span-12">No required parameters.</div>
+          </div>
+        )}
+
+        {/* Optional parameters (Collapsible) */}
+        {showOptional &&
+          optionalParams.map((param, index) => (
+            <div
+              key={index}
+              className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10 animate-in fade-in slide-in-from-top-1 duration-150"
+            >
+              <div className="col-span-3 text-orange-500">{param.field}</div>
+              <div className="col-span-3 text-zinc-400">
+                {param.type} • <span className="text-zinc-500">{param.presence}</span>
+              </div>
+              <div className="col-span-6 text-zinc-500">{param.description}</div>
+            </div>
+          ))}
+      </div>
+
+      {optionalParams.length > 0 && (
+        <div className="flex justify-start">
+          <button
+            onClick={() => setShowOptional(!showOptional)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider font-mono text-zinc-400 hover:text-zinc-200 bg-zinc-950/20 hover:bg-zinc-900 border border-zinc-800 rounded transition-all cursor-pointer group"
+          >
+            {showOptional ? (
+              <>
+                <span>Hide Optional Parameters</span>
+                <ChevronUp className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300" />
+              </>
+            ) : (
+              <>
+                <span>Show Optional Parameters</span>
+                <ChevronDown className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300" />
+              </>
+            )}
+            <span className="text-[9px] text-zinc-500">({optionalParams.length})</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const textParams: ParamInfo[] = [
+  {
+    field: "prompt",
+    type: "string",
+    presence: "Required",
+    description: "The core text content or instruction to the model."
+  },
+  {
+    field: "systemPrompt",
+    type: "string",
+    presence: "Optional",
+    description: "Guiding rules or custom system-level persona for the response."
+  },
+  {
+    field: "model",
+    type: "object",
+    presence: "Optional",
+    description: <>Optional config object containing <code>id</code>, <code>qtype</code>, <code>temperature</code>, <code>top_p</code>, <code>top_k</code>, <code>maxTokens</code>. If absent, reuse current or default model.</>
+  },
+  {
+    field: "isolatedRAG",
+    type: "boolean",
+    presence: "Optional",
+    description: "If true, queries will retrieve context ONLY from this session's isolated RAG storage tied to the specific reqId."
+  },
+  {
+    field: "ocean",
+    type: "object",
+    presence: "Optional",
+    description: <>Big Five personality traits containing <code>openness</code>, <code>conscientiousness</code>, <code>extraversion</code>, <code>agreeableness</code>, <code>neuroticism</code> (values 0-100) to guide character personality.</>
+  },
+  {
+    field: "reqId",
+    type: "string",
+    presence: "Optional",
+    description: "Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header."
+  }
+];
+
+const visionParams: ParamInfo[] = [
+  {
+    field: "image",
+    type: "File (Binary)",
+    presence: "Required",
+    description: "The physical image file input (JPEG/PNG/WebP)."
+  },
+  {
+    field: "prompt",
+    type: "string",
+    presence: "Optional",
+    description: "Visual query/question (defaults to image description)."
+  },
+  {
+    field: "model",
+    type: "string (JSON)",
+    presence: "Optional",
+    description: <>Optional config string containing <code>{"{\"id\": \"...\", \"qtype\": \"...\"}"}</code>.</>
+  },
+  {
+    field: "isolatedRAG",
+    type: "boolean",
+    presence: "Optional",
+    description: "If true, queries will retrieve context ONLY from this session's isolated RAG storage tied to the specific reqId."
+  },
+  {
+    field: "ocean",
+    type: "string (JSON)",
+    presence: "Optional",
+    description: <>JSON-string or keys (like <code>ocean</code> object) mapping Big Five traits containing <code>openness</code>, <code>conscientiousness</code>, etc.</>
+  },
+  {
+    field: "reqId",
+    type: "string",
+    presence: "Optional",
+    description: "Unique tracking key for task correlation, logs, and streaming updates. Form field, query, or header."
+  }
+];
+
+const isolatedRagParams: ParamInfo[] = [
+  {
+    field: "isolatedRAG",
+    type: "boolean",
+    presence: "Optional",
+    description: "If true, queries will retrieve context ONLY from this session's isolated vector database tied to the specific reqId."
+  },
+  {
+    field: "ocean",
+    type: "object",
+    presence: "Optional",
+    description: <>Object containing values (0-100) for <code>openness</code>, <code>conscientiousness</code>, <code>extraversion</code>, <code>agreeableness</code>, <code>neuroticism</code> to mold response personality traits. Alternatively, these keys can be supplied flat on the parent object.</>
+  }
+];
+
+const injectRagParams: ParamInfo[] = [
+  {
+    field: "isolatedRAG",
+    type: "boolean",
+    presence: "Required",
+    description: "Set to true to inject this background history/story into the isolated session tied to the specific reqId."
+  },
+  {
+    field: "text",
+    type: "string",
+    presence: "Required",
+    description: "The history text, lore, or memories to embed and inject."
+  },
+  {
+    field: "metadata",
+    type: "object",
+    presence: "Optional",
+    description: "Optional key-value pairs representing custom metadata."
+  }
+];
+
+const directorParams: ParamInfo[] = [
+  {
+    field: "prompt",
+    type: "string",
+    presence: "Required",
+    description: "The user query representing overall system instructions (e.g. generate music)."
+  },
+  {
+    field: "reqId",
+    type: "string",
+    presence: "Optional",
+    description: "Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header."
+  }
+];
+
+const imageParams: ParamInfo[] = [
+  {
+    field: "prompt",
+    type: "string",
+    presence: "Required",
+    description: "Description of image layout and artistic requirements."
+  },
+  {
+    field: "model",
+    type: "object",
+    presence: "Optional",
+    description: <>Optional config object containing <code>id</code> and <code>qtype</code>.</>
+  },
+  {
+    field: "reqId",
+    type: "string",
+    presence: "Optional",
+    description: "Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header."
+  }
+];
+
+const musicParams: ParamInfo[] = [
+  {
+    field: "prompt",
+    type: "string",
+    presence: "Required",
+    description: "Acoustic criteria (genre, feeling, speed, instruments)."
+  },
+  {
+    field: "model",
+    type: "object",
+    presence: "Optional",
+    description: <>Optional config object containing <code>id</code>, <code>qtype</code>, and <code>maxTokens</code>.</>
+  },
+  {
+    field: "reqId",
+    type: "string",
+    presence: "Optional",
+    description: "Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header."
+  }
+];
+
+const sttParams: ParamInfo[] = [
+  {
+    field: "audio",
+    type: "File (Binary)",
+    presence: "Required",
+    description: "Binary voice recording file format (e.g. wav/mp3)."
+  },
+  {
+    field: "reqId",
+    type: "string",
+    presence: "Optional",
+    description: "Unique tracking key for task correlation, logs, and streaming updates. Form field, query, or header."
+  }
+];
+
+const ttsParams: ParamInfo[] = [
+  {
+    field: "text",
+    type: "string",
+    presence: "Required",
+    description: "The textual message content to read."
+  },
+  {
+    field: "voiceID",
+    type: "string",
+    presence: "Optional",
+    description: "The specific Kokoro voice ID to use. Default is 'af_heart'."
+  },
+  {
+    field: "format",
+    type: "string",
+    presence: "Optional",
+    description: "The desired output format. Set to 'wav' to receive a raw WAV file instead of JSON."
+  },
+  {
+    field: "reqId",
+    type: "string",
+    presence: "Optional",
+    description: "Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header."
+  }
+];
+
+const healthParams: ParamInfo[] = [
+  {
+    field: "Origin / Referer",
+    type: "string",
+    presence: "Implicit",
+    description: "Automatically supplied by browser to allow hostname validation and access checks."
+  },
+  {
+    field: "reqId",
+    type: "string",
+    presence: "Optional",
+    description: "Unique tracking key for health correlation. Supported as query parameter or header."
+  }
+];
+
+const liveParams: ParamInfo[] = [
+  {
+    field: "audio",
+    type: "string (Base64)",
+    presence: "Required",
+    description: "Base64 encoded audio string for Speech-to-Text (conditionally required if text is not provided)."
+  },
+  {
+    field: "text",
+    type: "string",
+    presence: "Required",
+    description: "Raw text query (conditionally required if audio is not provided)."
+  },
+  {
+    field: "systemPrompt",
+    type: "string",
+    presence: "Optional",
+    description: "Optional system prompt/persona guidance for text generation."
+  },
+  {
+    field: "voiceId",
+    type: "string",
+    presence: "Optional",
+    description: <>Voice ID for the TTS model (e.g. <code>af_heart</code>).</>
+  },
+  {
+    field: "modelId",
+    type: "string",
+    presence: "Optional",
+    description: "Optional text generation model ID."
+  },
+  {
+    field: "isolatedRAG",
+    type: "boolean",
+    presence: "Optional",
+    description: "If true, queries will retrieve context ONLY from this session's isolated RAG storage tied to the specific reqId."
+  },
+  {
+    field: "reqId",
+    type: "string",
+    presence: "Optional",
+    description: "Unique tracking key for task correlation, logs, and session-history persistence."
+  }
+];
 
 interface ApiGuideModalProps {
   isOpen: boolean;
@@ -69,7 +429,7 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
               <ScrollArea className="h-full p-4">
                 <nav className="space-y-1">
                   <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter mb-4">{activeTab === "api" ? "Endpoints" : "WebSocket Docs"}</p>
-                  {activeTab === "api" ? ['List Models', 'Text', 'Vision', 'Director', 'Image', 'Music', 'STT', 'TTS', 'Health Check', 'Domain Integration'].map(item => (
+                  {activeTab === "api" ? ['List Models', 'Text', 'Vision', 'Isolated RAG', 'Director', 'Image', 'Music', 'STT', 'TTS', 'Health Check', 'Domain Integration'].map(item => (
                     <button 
                       key={item}
                       onClick={() => {
@@ -84,7 +444,7 @@ export function ApiGuideModal({ isOpen, onClose }: ApiGuideModalProps) {
                       <span>{item}</span>
                       <span className="text-[10px] text-zinc-600 group-hover:text-orange-500 font-mono">→</span>
                     </button>
-                  )) : ['Connection', 'Streaming', 'Event Types'].map(item => (
+                  )) : ['Connection', 'Streaming', 'Event Types', 'Live API'].map(item => (
                     <button 
                       key={item}
                       onClick={() => {
@@ -185,33 +545,7 @@ Host: localhost`}
                   {/* Schema */}
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Parameters & Schema</span>
-                    <div className="bg-zinc-950/70 border border-zinc-900 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
-                      <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
-                        <div className="col-span-3">Field</div>
-                        <div className="col-span-3">Type / Presence</div>
-                        <div className="col-span-6">Description</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">prompt</div>
-                        <div className="col-span-3 text-zinc-400">string • Required</div>
-                        <div className="col-span-6 text-zinc-500">The core text content or instruction to the model.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">systemPrompt</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Guiding rules or custom system-level persona for the response.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">model</div>
-                        <div className="col-span-3 text-zinc-400">object • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Optional config object containing <code>id</code>, <code>qtype</code>, <code>temperature</code>, <code>top_p</code>, <code>top_k</code>, <code>maxTokens</code>. If absent, reuse current or default model.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">reqId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header.</div>
-                      </div>
-                    </div>
+                    <ParameterSchemaTable parameters={textParams} borderType="accent" />
                   </div>
 
                   {/* Examples */}
@@ -223,8 +557,16 @@ Host: localhost`}
                         <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-48 overflow-y-auto w-full">
                           <pre className="text-zinc-300">
 {`{
-  "prompt": "Write a poem...",
-  "systemPrompt": "Expert poet",
+  "prompt": "Tell me about my training at the towers...",
+  "systemPrompt": "You are a wise wizard NPC.",
+  "isolatedRAG": true,
+  "ocean": {
+    "openness": 95,
+    "conscientiousness": 80,
+    "extraversion": 30,
+    "agreeableness": 70,
+    "neuroticism": 40
+  },
   "model": {
     "id": "LemOneLabs/Llama-3.2-1B-Instruct-ONNX",
     "qtype": "q4fp16",
@@ -271,33 +613,7 @@ Host: localhost`}
                   {/* Schema */}
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Parameters & Schema (Multipart Form-Data)</span>
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
-                      <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
-                        <div className="col-span-3">Field</div>
-                        <div className="col-span-3">Type / Presence</div>
-                        <div className="col-span-6">Description</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">image</div>
-                        <div className="col-span-3 text-zinc-400">File (Binary) • Required</div>
-                        <div className="col-span-6 text-zinc-500">The physical image file input (JPEG/PNG/WebP).</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">prompt</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Visual query/question (defaults to image description).</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">model</div>
-                        <div className="col-span-3 text-zinc-400">string (JSON) • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Optional config string containing <code>{"{\"id\": \"...\", \"qtype\": \"...\"}"}</code>.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">reqId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Unique tracking key for task correlation, logs, and streaming updates. Form field, query, or header.</div>
-                      </div>
-                    </div>
+                    <ParameterSchemaTable parameters={visionParams} borderType="normal" />
                   </div>
 
                   {/* Examples */}
@@ -331,6 +647,68 @@ Host: localhost`}
                   </div>
                 </section>
 
+                {/* Isolated RAG */}
+                <section id="api-guide-isolated-rag" className="space-y-6 scroll-mt-6">
+                  <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                        <Activity className="w-4 h-4 text-emerald-500" />
+                      </div>
+                      <h3 className="text-lg font-mono font-bold uppercase tracking-tight">Isolated RAG & OCEAN</h3>
+                    </div>
+                    <code className="px-2 py-1 bg-zinc-900 text-emerald-400 border border-zinc-800 rounded text-[10px]">POST /api/injectRAG</code>
+                  </div>
+                  <p className="text-sm text-zinc-400 leading-relaxed">
+                    Build distinct, character-centric sessions with isolated vector memory stores and customize personality using the Big Five (OCEAN) traits.
+                  </p>
+
+                  {/* Schema */}
+                  <div className="space-y-3">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">1. Isolated RAG Parameters (Optional on /api/text & /api/vision)</span>
+                    <ParameterSchemaTable parameters={isolatedRagParams} borderType="accent" />
+                  </div>
+
+                  <div className="space-y-3">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">2. Inject Background Story (POST /api/injectRAG)</span>
+                    <ParameterSchemaTable parameters={injectRagParams} borderType="accent" />
+                  </div>
+
+                  {/* Examples */}
+                  <div className="space-y-3">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Injected & Isolated Query Examples</span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-wider pl-1">Inject Story (POST /api/injectRAG)</span>
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-48 overflow-y-auto w-full">
+                          <pre className="text-zinc-300">
+{`{
+  "isolatedRAG": true,
+  "text": "The wizard was trained at the floating towers of Dalaran, mastering spatial magic.",
+  "metadata": { "type": "background_lore" }
+}`}
+                          </pre>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-wider pl-1">Response JSON (POST /api/injectRAG)</span>
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-48 overflow-y-auto w-full">
+                          <pre className="text-emerald-500">
+{`{
+  "success": true,
+  "message": "Successfully injected background story into isolated RAG.",
+  "entry": {
+    "id": "e0b59b1da9b",
+    "text": "The wizard was trained at the floating towers...",
+    "timestamp": 1782820980000
+  }
+}`}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
                 {/* Director */}
                 <section id="api-guide-director" className="space-y-6 scroll-mt-6">
                   <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
@@ -349,23 +727,7 @@ Host: localhost`}
                   {/* Schema */}
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Parameters & Schema</span>
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
-                      <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
-                        <div className="col-span-3">Field</div>
-                        <div className="col-span-3">Type / Presence</div>
-                        <div className="col-span-6">Description</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">prompt</div>
-                        <div className="col-span-3 text-zinc-400">string • Required</div>
-                        <div className="col-span-6 text-zinc-500">The user query representing overall system instructions (e.g. generate music).</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">reqId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header.</div>
-                      </div>
-                    </div>
+                    <ParameterSchemaTable parameters={directorParams} borderType="normal" />
                   </div>
 
                   {/* Examples */}
@@ -401,34 +763,13 @@ Host: localhost`}
                     <code className="px-2 py-1 bg-zinc-900 text-pink-400 border border-zinc-800 rounded text-[10px]">POST /api/image</code>
                   </div>
                   <p className="text-sm text-zinc-400 leading-relaxed">
-                    Generate photorealistic or graphic assets using Imagen or Stable Diffusion models inside the local workspace.
+                    Generate photorealistic or graphic assets using Janus-Pro-1B models inside the local workspace.
                   </p>
 
                   {/* Schema */}
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Parameters & Schema</span>
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
-                      <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
-                        <div className="col-span-3">Field</div>
-                        <div className="col-span-3">Type / Presence</div>
-                        <div className="col-span-6">Description</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">prompt</div>
-                        <div className="col-span-3 text-zinc-400">string • Required</div>
-                        <div className="col-span-6 text-zinc-500">Description of image layout and artistic requirements.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">model</div>
-                        <div className="col-span-3 text-zinc-400">object • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Optional config object containing <code>id</code> and <code>qtype</code>.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">reqId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header.</div>
-                      </div>
-                    </div>
+                    <ParameterSchemaTable parameters={imageParams} borderType="normal" />
                   </div>
 
                   {/* Examples */}
@@ -442,7 +783,7 @@ Host: localhost`}
 {`{
   "prompt": "Futuristic cyberpunk terminal with soft holograms, 8k resolution",
   "model": {
-    "id": "imagen-3",
+    "id": "Janus-Pro-1B-ONNX",
     "qtype": "q4fp16"
   }
 }`}
@@ -482,28 +823,7 @@ Host: localhost`}
                   {/* Schema */}
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Parameters & Schema</span>
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
-                      <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
-                        <div className="col-span-3">Field</div>
-                        <div className="col-span-3">Type / Presence</div>
-                        <div className="col-span-6">Description</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">prompt</div>
-                        <div className="col-span-3 text-zinc-400">string • Required</div>
-                        <div className="col-span-6 text-zinc-500">Acoustic criteria (genre, feeling, speed, instruments).</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">model</div>
-                        <div className="col-span-3 text-zinc-400">object • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Optional config object containing <code>id</code>, <code>qtype</code>, and <code>maxTokens</code>.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">reqId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header.</div>
-                      </div>
-                    </div>
+                    <ParameterSchemaTable parameters={musicParams} borderType="normal" />
                   </div>
 
                   {/* Examples */}
@@ -558,23 +878,7 @@ Host: localhost`}
                   {/* Schema */}
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Parameters & Schema (Multipart Form-Data)</span>
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
-                      <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
-                        <div className="col-span-3">Field</div>
-                        <div className="col-span-3">Type / Presence</div>
-                        <div className="col-span-6">Description</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">audio</div>
-                        <div className="col-span-3 text-zinc-400">File (Binary) • Required</div>
-                        <div className="col-span-6 text-zinc-500">Binary voice recording file format (e.g. wav/mp3).</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">reqId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Unique tracking key for task correlation, logs, and streaming updates. Form field, query, or header.</div>
-                      </div>
-                    </div>
+                    <ParameterSchemaTable parameters={sttParams} borderType="normal" />
                   </div>
 
                   {/* Examples */}
@@ -623,28 +927,7 @@ Host: localhost`}
                   {/* Schema */}
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Parameters & Schema</span>
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
-                      <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
-                        <div className="col-span-3">Field</div>
-                        <div className="col-span-3">Type / Presence</div>
-                        <div className="col-span-6">Description</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">text</div>
-                        <div className="col-span-3 text-zinc-400">string • Required</div>
-                        <div className="col-span-6 text-zinc-500">The textual message content to read.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">voiceID</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">The specific Kokoro voice ID to use. Default is 'af_heart'.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">reqId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Unique tracking key for task correlation, logs, and streaming updates. Body, query, or header.</div>
-                      </div>
-                    </div>
+                    <ParameterSchemaTable parameters={ttsParams} borderType="normal" />
                   </div>
 
                   {/* Examples */}
@@ -667,8 +950,13 @@ Host: localhost`}
                         <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] h-32 overflow-y-auto w-full">
                           <pre className="text-cyan-400">
 {`{
-  "audioUrl": "data:audio/mp3;base64,SUQzBAAAAAAA...",
-  "type": "audio/mp3"
+  "audio": [
+    -2.52568071346104e-7,
+    6.39836116533843e-7,
+    ...
+  ],
+  "sampling_rate": 24000,
+  "wav_base64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEA..."
 }`}
                           </pre>
                         </div>
@@ -696,23 +984,7 @@ Host: localhost`}
                   {/* Schema */}
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Request Headers</span>
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
-                      <div className="grid grid-cols-12 gap-4 pb-2 text-[9px] font-bold text-zinc-600 tracking-wider uppercase">
-                        <div className="col-span-3">Field</div>
-                        <div className="col-span-3">Type / Presence</div>
-                        <div className="col-span-6">Description</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">Origin / Referer</div>
-                        <div className="col-span-3 text-zinc-400">string • Implicit</div>
-                        <div className="col-span-6 text-zinc-500">Automatically supplied by browser to allow hostname validation and access checks.</div>
-                      </div>
-                      <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
-                        <div className="col-span-3 text-orange-500">reqId</div>
-                        <div className="col-span-3 text-zinc-400">string • Optional</div>
-                        <div className="col-span-6 text-zinc-500">Unique tracking key for health correlation. Supported as query parameter or header.</div>
-                      </div>
-                    </div>
+                    <ParameterSchemaTable parameters={healthParams} borderType="normal" />
                   </div>
 
                   {/* Examples */}
@@ -925,6 +1197,48 @@ ws.onmessage = (event) => {
                           <div className="grid grid-cols-12 gap-4 py-2 hover:bg-zinc-900/10">
                             <div className="col-span-3 text-orange-500">error</div>
                             <div className="col-span-9 text-zinc-500">Contains an <code>error</code> message string if execution fails.</div>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section id="ws-guide-live-api" className="space-y-6 scroll-mt-6">
+                      <div className="flex items-center justify-between border-b border-zinc-800/50 pb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded bg-red-500/10 flex items-center justify-center border border-red-500/20">
+                            <Mic className="w-4 h-4 text-red-500" />
+                          </div>
+                          <h3 className="text-lg font-mono font-bold uppercase tracking-tight">Live API (Voice Pipeline)</h3>
+                        </div>
+                        <code className="px-2 py-1 bg-zinc-900 text-red-400 border border-zinc-800 rounded text-[10px]">ws://localhost:{PORT}/api/live</code>
+                      </div>
+                      <p className="text-sm text-zinc-400 leading-relaxed">
+                        The Live API provides a single WebSocket endpoint to handle the entire STT -&gt; Text Generation -&gt; TTS pipeline. You can send audio or text, and it will return the processed text and synthesized speech audio back.
+                      </p>
+                      
+                      <div className="space-y-3">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Input Payload (JSON)</span>
+                        <ParameterSchemaTable parameters={liveParams} borderType="accent" />
+                      </div>
+
+                      <div className="space-y-3">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1 font-mono">Response Events</span>
+                        <div className="bg-zinc-950/70 border border-zinc-900 rounded-lg p-4 font-mono text-[11px] w-full divide-y divide-zinc-800/45">
+                          <div className="grid grid-cols-12 gap-4 py-2">
+                            <div className="col-span-3 text-orange-500">status</div>
+                            <div className="col-span-9 text-zinc-500">Contains the current pipeline status (e.g. <code>processing-stt</code>, <code>processing-text</code>, <code>processing-tts</code>, <code>idle</code>).</div>
+                          </div>
+                          <div className="grid grid-cols-12 gap-4 py-2">
+                            <div className="col-span-3 text-orange-500">stt-result</div>
+                            <div className="col-span-9 text-zinc-500">Returns the transcribed <code>text</code> if audio was provided.</div>
+                          </div>
+                          <div className="grid grid-cols-12 gap-4 py-2">
+                            <div className="col-span-3 text-orange-500">text-result</div>
+                            <div className="col-span-9 text-zinc-500">Returns the generated assistant <code>text</code> response.</div>
+                          </div>
+                          <div className="grid grid-cols-12 gap-4 py-2">
+                            <div className="col-span-3 text-orange-500">tts-result</div>
+                            <div className="col-span-9 text-zinc-500">Returns the generated speech <code>audio</code> as an array of samples.</div>
                           </div>
                         </div>
                       </div>

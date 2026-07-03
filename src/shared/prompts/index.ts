@@ -5,3 +5,4 @@ export * from "./image";
 export * from "./music";
 export * from "./live";
 export * from "./memory";
+export * from "./ocean";

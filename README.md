@@ -44,6 +44,14 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   {
     "prompt": "string (Required)",
     "systemPrompt": "string (Optional)",
+    "isolatedRAG": "boolean (Optional - If true, ties isolated vector memory RAG lookup to the specific reqId)",
+    "ocean": {
+      "openness": "number (Optional, 0-100)",
+      "conscientiousness": "number (Optional, 0-100)",
+      "extraversion": "number (Optional, 0-100)",
+      "agreeableness": "number (Optional, 0-100)",
+      "neuroticism": "number (Optional, 0-100)"
+    },
     "model": {
       "id": "string (Optional)",
       "qtype": "string (Optional) defaults to q4fp16",
@@ -55,6 +63,8 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   }
   ```
   - **model.id**: Targets a specific loaded text model (e.g., `gemma-2-2b-instruct`). If absent, reuse current or default model.
+  - **isolatedRAG**: Enables session-isolated RAG context search for this request, tying it to the specific reqId.
+  - **ocean**: Allows setting specific Big Five OCEAN traits dynamically to shape character traits. Supports nested `"ocean": { ... }` or flat parameter key-values in the parent JSON structure.
   - **reqId**: Unique tracking key for task correlation, isolated conversation history logs, and streaming updates. Can also be supplied via URL query parameter `?reqId=...` or headers `x-req-id` / `reqid`.
 - **Response**:
   ```json
@@ -159,6 +169,7 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   {
     "text": "string (Required)",
     "modelId": "string (Optional)",
+    "format": "string (Optional, e.g., 'wav')",
     "reqId": "string (Optional)"
   }
   ```
@@ -166,11 +177,35 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   ```json
   {
     "audio": [0.0, 0.05, ...],
-    "sampling_rate": 24000
+    "sampling_rate": 24000,
+    "wav_base64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEA..."
   }
   ```
 
-#### 8. Health Check (`GET /api/health`)
+#### 8. Inject Background Story / Lore (`POST /api/injectRAG`)
+- **Body**:
+  ```json
+  {
+    "isolatedRAG": "boolean (Required - Set to true to isolate to the specific reqId)",
+    "text": "string (Required - Background lore, history, or knowledge context to inject)",
+    "metadata": "object (Optional - Custom key-value meta objects)"
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Successfully injected background story into isolated RAG.",
+    "entry": {
+      "id": "string",
+      "text": "string",
+      "embedding": [0.1, -0.05, ...],
+      "timestamp": 1719777000
+    }
+  }
+  ```
+
+#### 9. Health Check (`GET /api/health`)
 - **Response**:
   ```json
   {
@@ -179,7 +214,7 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   }
   ```
 
-#### 9. Conversation History Management
+#### 10. Conversation History Management
 - **Archive History (`POST /api/archive-history`)**:
   - **Body**: `{"oldReqId": "string", "newReqId": "string"}`
   - **Response**: `{"success": true, "message": "Archived oldReqId to newReqId"}`
@@ -201,14 +236,78 @@ curl -X POST http://localhost:9777/api/text \
 
 ---
 
-## For Developers (Headless Mode)
+## For Developers (Headless Mode & Silent Launch)
 
-Omnix can be used as a backend service for your own applications.
+Omnix can be used as a fully silent, headless backend service or an in-game inference engine for other applications.
 
-- **Silent Start**: `omnix --silent` (Starts the engine without opening any GUI window)
-- **Process Attachment**: `omnix --dependent-pid <PID>` (Omnix will automatically shut down when the parent PID is no longer active)
+### 1. Native Desktop Headless Mode (`--worker` CLI flag)
+For native/desktop distributions, you can launch the Omnix process silently with zero user interaction:
+- **Headless Worker Launch**: `omnix --worker`
+  - Runs in a fully hidden, offscreen background context.
+  - Automatically bypasses the visual prompt asking *"Do you want to launch the API server?"* and boots the server immediately.
+  - Spawns only a hidden, lightweight BrowserWindow to leverage full local GPU hardware-accelerated WebGPU/WebGL model inference.
+- **Process Attachment**: `omnix --dependent-pid <PID>`
+  - Omnix automatically monitors the specified parent process PID and gracefully shuts down when that parent process terminates. Perfect for bundling Omnix inside games or companion applications.
+- **Silent CLI Flag**: `omnix --silent` (Bypasses window focus prompts)
 - **Port Selection**: Use the `PORT` environment variable to override the default 9777 port.
-- **Singleton Pattern**: Starting a second instance of Omnix on the same port will return the PID of the existing process to `stdout` and exit immediately.
+- **Singleton Check**: Starting a second instance of Omnix on the same port will print the PID of the existing instance to `stdout` and terminate immediately.
+
+### 2. Browser / Webview Headless Mode (`?mode=worker` query parameter)
+If you are embedding Omnix inside a standard browser context, custom webview, or frame:
+- **Web Worker URL**: Append `?mode=worker` (e.g. `http://localhost:3000/?mode=worker`) to the address.
+- **Behavior**: The page deactivates the heavy visual React DOM renderer and presents a single static black backdrop, maximizing the browser's thread priority and WebGPU acceleration for raw background API inference.
+
+### 3. Network Security & Global IP Access (Disabled by Default)
+For maximum local system safety, the local API server binds exclusively to **Localhost only (`127.0.0.1`) by default**. This blocks random network devices or WAN/Global IP requests from accessing your local WebGPU hardware/APIs.
+
+To allow connection via your **Global IP or Local LAN IP**:
+- **Option A (GUI Toggle)**: Open settings in the Sidebar and toggle **GLOBAL_API** to `ON`. This persists the setting immediately. Restart the API server or app to bind to `0.0.0.0`.
+- **Option B (CLI Flags)**: Launch the app or server with `--allow-remote` or `--global`.
+- **Option C (Environment Variables)**: Run the process with the environment variable `ALLOW_REMOTE=true` or `OMNIX_GLOBAL_ACCESS=true`.
+- **Option D (Config File)**: Create or edit an `omnix-config.json` file in your root folder with:
+  ```json
+  {
+    "allowRemote": true
+  }
+  ```
+
+#### 🌐 Troubleshooting Global/WAN Connections
+Even with `GLOBAL_API` enabled (binding to `0.0.0.0`), incoming connections from the public Internet (using your Global IP) will be blocked by standard network security barriers. If you see connection errors like `Unable to connect to the remote server`:
+
+1. **Router Port Forwarding**: Your router acts as a NAT firewall. It does not know which device on your home/office network is running Omnix. You must log into your router's administration panel and forward incoming TCP traffic on port `9777` to the **Local LAN IP** of the machine running Omnix (e.g., `192.168.1.15`).
+2. **OS/System Firewall Rules**: Windows Defender or macOS/Linux Firewalls block incoming traffic on non-standard ports by default. You must create an **Inbound Rule** to allow TCP traffic on port `9777`.
+3. **ISP Constraints & CGNAT**: Many residential Internet Service Providers place customers behind a Carrier-Grade NAT (CGNAT), where multiple households share a single public IP. In this setup, traditional port forwarding will not work.
+4. **Secure Alternatives (Tunneling)**: Instead of exposing your machine directly to the public web, it is highly recommended to use secure tunneling services:
+   - **ngrok**: Run `ngrok http 9777` to create a secure public URL forwarding to your local Omnix server.
+   - **Tailscale / ZeroTier**: Create a private virtual mesh network between your devices so they can communicate securely as if they were on the same local network, without exposing ports to the public Internet.
+
+---
+
+### 🎙️ Text-to-Speech (TTS) API Format & Saving Audio
+The TTS API (`/api/tts`) outputs high-quality raw audio samples (`Float32Array`) at a sample rate of `24000 Hz`.
+
+To make saving audio files seamless, we support two output formats:
+
+#### Method A: Direct WAV File Download (Recommended)
+You can request the API to package the audio samples into a standard **16-bit PCM WAV file** by adding `"format": "wav"` to your JSON payload or appending `?format=wav` to your URI. This can be saved directly using PowerShell:
+
+```powershell
+# Call TTS API requesting a WAV file and save it directly to output.wav
+Invoke-RestMethod -Uri "http://localhost:3000/api/tts" -Method Post `
+  -ContentType "application/json" `
+  -Body '{"text": "Hello world from Omnix TTS!", "format": "wav"}' `
+  -OutFile "output.wav"
+```
+
+#### Method B: Raw JSON PCM Samples
+By default, the endpoint returns raw floats and sample rate:
+```json
+{
+  "audio": [-0.00012, 0.00034, ...],
+  "sampling_rate": 24000
+}
+```
+If you need to process these samples manually, you can use standard browser Web Audio APIs (like `AudioContext.createBuffer()`) or convert them using a custom processing script.
 
 ---
 

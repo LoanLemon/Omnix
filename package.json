@@ -1,8 +1,10 @@
 {
   "name": "omnix",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "main": "electron/main.js",
+  "description":"A high-performance local AI orchestration studio. Run vision, speech, and coding models privately on your device using WebGPU and Transformers.js.",
+  "author":"Dustin Lee",
   "bin": {
     "omnix": "./dist/cli.js"
   },
@@ -33,7 +35,8 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "electron/icon.ico"
     },
     "mac": {
       "target": [

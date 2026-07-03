@@ -218,7 +218,7 @@ export const MODELS: ModelInfo[] = [
     description: "Latent Consistency Model for fast inference. Good for lower-end hardware.",
     size: "~2GB",
     dtype:  "q4",
-    qtypes: ["q4","q4f16"],
+    qtypes: ["q4"],
     category: "image-gen",
     make: "LATENT-CONSISTENCY",
     minRam: 4,

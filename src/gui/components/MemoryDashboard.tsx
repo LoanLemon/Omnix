@@ -10,6 +10,7 @@ import { browserEngine } from "../lib/ModelEngine";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
+import { getToneDescriptor } from "@shared/prompts";
 
 export function MemoryDashboard() {
   const { messages, addLog, emotionalState, setEmotionalState, focusTopics, enableFocusTopics, contextMemoryLimit, setContextMemoryLimit } = useApp();
@@ -365,6 +366,20 @@ export function MemoryDashboard() {
               <div className="flex items-center gap-1.5 border-b border-border/30 pb-2">
                 <Brain className="w-4 h-4 text-orange-500" />
                 <h3 className="font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-200">OCEAN personality settings</h3>
+              </div>
+
+              {/* Active Tone Archetype Display */}
+              <div className="p-2.5 bg-orange-950/15 border border-orange-500/15 rounded-sm">
+                <div className="text-[8px] uppercase font-bold text-orange-400 tracking-wider font-mono">Mapped Tone Archetype:</div>
+                <div className="text-xs text-zinc-300 font-sans italic mt-1 capitalize leading-relaxed">
+                  "{[
+                    getToneDescriptor("openness", ocean.openness),
+                    getToneDescriptor("conscientiousness", ocean.conscientiousness),
+                    getToneDescriptor("extraversion", ocean.extraversion),
+                    getToneDescriptor("agreeableness", ocean.agreeableness),
+                    getToneDescriptor("neuroticism", ocean.neuroticism)
+                  ].filter(Boolean).join(", ")}"
+                </div>
               </div>
 
               <div className="space-y-3.5 font-mono">

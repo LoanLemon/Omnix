@@ -8,7 +8,6 @@ export default defineConfig(({mode}) => {
   return {
     plugins: [react(), tailwindcss()],
     base: './',
-    exclude: ['@huggingface/transformers'],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src/gui'),
@@ -16,5 +15,8 @@ export default defineConfig(({mode}) => {
         '@engine': path.resolve(__dirname, './src/engine'),
       },
     },
+    build: {
+      sourcemap: false,
+    }
   };
 });

@@ -541,7 +541,28 @@ export class BrowserModelEngine {
     return this.postToWorker("getEmbedding", { text }, progressCallback);
   }
 
+  cancelInference(requestId: string) {
+    const pending = this.pendingRequests.get(requestId);
+    if (pending && pending.workerKey) {
+      const worker = this.workers.get(pending.workerKey);
+      if (worker) {
+        worker.postMessage({ type: "cancelInference", requestId });
+      }
+    } else {
+      // Broadcast to all just in case
+      for (const worker of this.workers.values()) {
+        if (worker) {
+          worker.postMessage({ type: "cancelInference", requestId });
+        }
+      }
+    }
+  }
+
   async runInference(category: string, input: any, options: any = {}, onToken?: (token: string) => void) {
+    if (category === "embedding") {
+      return this.getEmbedding(input);
+    }
+
     if (category === "tts") {
       const voiceID = options.voiceID || options.voiceId || options.modelId || "af_heart";
       try {

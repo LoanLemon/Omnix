@@ -41,6 +41,8 @@ interface AppContextType {
   setMinimizeToTray: (val: boolean) => void;
   enableRelayMode: boolean;
   setEnableRelayMode: (val: boolean) => void;
+  allowRemote: boolean;
+  setAllowRemote: (val: boolean) => void;
   thinkEnabled: boolean;
   setThinkEnabled: (val: boolean) => void;
   enableMMRS: boolean;

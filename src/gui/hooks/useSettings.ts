@@ -72,6 +72,11 @@ export function useSettings() {
     return saved === "true";
   });
 
+  const [allowRemote, setAllowRemote] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_allow_remote");
+    return saved === "true";
+  });
+
   const [enableFocusTopics, setEnableFocusTopics] = useState<boolean>(() => {
     const saved = localStorage.getItem("omnix_enable_focus_topics");
     return saved === null ? true : saved === "true";
@@ -141,6 +146,25 @@ export function useSettings() {
   useEffect(() => {
     localStorage.setItem("omnix_enable_relay", enableRelayMode.toString());
   }, [enableRelayMode]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_allow_remote", allowRemote.toString());
+    const updateServerConfig = async () => {
+      try {
+        const port = window.location.port || "9777";
+        await fetch(`http://localhost:${port}/api/server/config`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ allowRemote })
+        });
+      } catch (e) {
+        // Safe ignore
+      }
+    };
+    updateServerConfig();
+  }, [allowRemote]);
 
   useEffect(() => {
     localStorage.setItem("omnix_enable_rag", enableRAG.toString());
@@ -225,6 +249,8 @@ export function useSettings() {
     setIsCoderMode,
     enableRelayMode,
     setEnableRelayMode,
+    allowRemote,
+    setAllowRemote,
     enableFocusTopics,
     setEnableFocusTopics,
     thinkEnabled,

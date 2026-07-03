@@ -1,10 +1,27 @@
 # Changelog
 
-All notable changes to the **OmniX** project will be documented in this file.
+All notable changes to the **Omnix** project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
+
+## [0.8.0] - 2026-07-03
+
+### Added
+- **Live API WebSocket Endpoint**: Added a new `/api/live` WebSocket endpoint that streamlines processing audio via STT, generating a text response, and synthesizing it back to speech (TTS) in a single pipeline to reduce multi-request latency for external integrations.
+- **API TTS Audio Formatting**: Added an optional `format` parameter to the `/api/tts` endpoint (accepting `wav`) to support outputting standard 16-bit PCM WAV audio files instead of JSON.
+- **Isolated RAG System**: Introduced an isolated RAG engine, allowing developers to target and query distinct vector memories mapped to a specific session (via the optional `isolatedRAG` boolean parameter tying it to the `reqId` on `/api/text` and `/api/vision`).
+- **Story/History Injection (`/api/injectRAG`)**: Created a new POST `/api/injectRAG` API to dynamically embed and insert custom backstory, lore, and context chunks into a character's isolated vector database.
+- **OCEAN Personality traits**: Integrated support for optional Big Five traits (`openness`, `conscientiousness`, `extraversion`, `agreeableness`, `neuroticism`) in standard text and vision generation APIs, mapping parameters dynamically into character prompts.
+- **API Image Generation Documentation**: Updated model details in the API guide to reflect **Janus-Pro-1B-ONNX** as the primary image synthesis engine.
+- **Operator Logs Diagnostics**: Added detailed inputs, options, and outputs printing in the developer's Operator Logs for API/remote tasks to ease integration troubleshooting.
+- **Dynamic LFM2 MaxTokens Handling**: Optimized token budget allocations for the LFM2 model in the background worker, expanding the default token budget when LFM2 is loaded to prevent premature output truncation.
+
+### Fixed
+- **STT Endpoint Multipart Parsing**: Fixed `Unexpected end of form at Multipart._final` error caused by greedy text body parser middleware consuming `multipart/form-data` streams before Multer could process audio uploads in the `/api/stt` endpoint.
+- **API Image Generation Engine**: Resolved an issue in the `/api/image` endpoint where `RawImage` payload buffers were returning as invalid formats; added internal processing via `sharp` to correctly encode them as valid base64 PNG strings.
+- **Sequential API Task Queuing**: Fixed Web Worker concurrency handling by ensuring all model-loading, cleanup, embedding, and inference operations strictly await and lock the `engine.isBusy` state. This prevents simultaneous model-swapping requests from interrupting active tasks with "Inference interrupted by model change" errors, queuing them until ready.
 
 ## [0.7.0] - 2026-06-27
 

@@ -308,11 +308,19 @@ export async function handleTextInference(
         pipeOptions.streamer = new transformers.TextStreamer(engine.pipeline.tokenizer, {
           skip_prompt: true,
           skip_special_tokens: true,
-          callback_function: onToken
+          callback_function: (val: string) => {
+            if (options.abortId && (engine as any).abortFlags && (engine as any).abortFlags[options.abortId]) {
+              throw new Error("Inference aborted by client.");
+            }
+            onToken(val);
+          }
         });
       } else {
         let lastLength = 0;
         pipeOptions.callback_function = (beams: any) => {
+          if (options.abortId && (engine as any).abortFlags && (engine as any).abortFlags[options.abortId]) {
+            throw new Error("Inference aborted by client.");
+          }
           const decoded = engine.pipeline.tokenizer.decode(beams[0].output_token_ids, { skip_special_tokens: true });
           let currentText = decoded;
 
@@ -564,6 +572,11 @@ export async function runDirectorInference(
       thinking = text.substring(openThinkIdx + 7).trim();
       text = text.substring(0, openThinkIdx).trim();
     }
+  }
+  
+  if (!text && thinking) {
+     text = thinking;
+     thinking = "";
   }
   
   let cleanOutput = text.trim();

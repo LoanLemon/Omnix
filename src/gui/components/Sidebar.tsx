@@ -54,6 +54,8 @@ export function Sidebar({
     isCoderMode,
     enableRelayMode,
     setEnableRelayMode,
+    allowRemote,
+    setAllowRemote,
     enableFocusTopics,
     setEnableFocusTopics,
     thinkEnabled,
@@ -590,6 +592,17 @@ export function Sidebar({
                   checked={enableRelayMode} 
                   onCheckedChange={setEnableRelayMode}
                   className="scale-75 data-[state=checked]:bg-yellow-600 ml-[-4px]"
+                />
+              </div>
+              <div className="space-y-2">
+                <span className="text-[8px] font-mono text-muted-foreground/50 uppercase">GLOBAL_API</span>
+                <Switch 
+                  checked={allowRemote} 
+                  onCheckedChange={(val) => {
+                    setAllowRemote(val);
+                  }}
+                  className="scale-75 data-[state=checked]:bg-yellow-600 ml-[-4px]"
+                  title="Enable global IP / LAN access to the API (Requires server restart)"
                 />
               </div>
               <div className="space-y-2">
