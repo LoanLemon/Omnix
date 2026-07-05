@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.8.1] - 2026-07-04
+
+### Added
+- **Localhost Connection Auto-Approval**: Added automated detection for inbound requests originating from `localhost` (IP address or hostname), bypassing authorization dialog prompts to allow frictionless developer testing and local application integrations.
+- **Connection Authorization Auto-Foregrounding**: Integrated a system to automatically bring the main Omnix application window to the foreground and request user focus when an external domain makes a connection or health-check request requiring manual approval.
+- **Unified LiveWS Queue Pipeline**: Migrated the entire Live API WebSocket (`/api/live`) payload orchestration to a single, unified `livews` queue task. This ensures strict sequential processing (STT -> Text Gen -> TTS) inside the worker, avoiding network bottlenecks and server-client state drift.
+- **Punctuation-Aware TTS Chunking**: Implemented robust sentence chunking for both standard and Live WebSocket speech synthesis. Text is parsed based on natural pause indicators (commas, semicolons, colons, and em-dashes), falling back to a strict 10-word split, eliminating engine memory spikes and crash-prone stalls.
+- **Automatic `<think>` Tag Stripping**: Integrated automatic regex filtering to strip reasoning content wrapped in `<think>...</think>` tags before transmitting generated text to clients or passing it to the TTS synthesizer.
+
+### Fixed
+- **Robust Model-Aware Task Queuing**: Overhauled the remote WebSocket task queuing system to prevent model-switching thrashing and `Inference interrupted by model change` errors. The queue now encapsulates each task's required operational mode (category) and processing model (resolving to default/selected models if not explicitly provided). When processing tasks, the engine guarantees that the required processing model is fully active and loaded first, blocks the GUI from triggering automatic mode-sync model loads during active background execution, and processes the request before removing the task from the queue.
+- **Stale Task Queue Timeout**: Fixed a critical memory-leak/race condition where requeued tasks did not clear their original `setTimeout` timers. When those stale timers eventually fired, they prematurely deleted and rejected active tasks on newly registered workers, causing false "Task timed out: Worker stalled" errors in the Live WebSocket pipeline.
+- **Worker Memory Idle Leak**: Fixed an issue where the background workers were not terminated when the application was idle but no models had been loaded. Background Web Workers are now terminated upon a 10-minute inactivity timeout even when starting from a freshly initialized state, releasing WebGPU/WASM memory, and are dynamically re-initialized when a new request arrives.
+- **WebSocket Awareness**: Fixed an issue where the Live WebSocket lacked awareness of previous context during a session.
+
 ## [0.8.0] - 2026-07-03
 
 ### Added

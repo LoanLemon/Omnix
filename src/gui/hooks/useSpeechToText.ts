@@ -1,6 +1,19 @@
 import { useState, useRef, useCallback } from "react";
 import { browserEngine } from "@/lib/ModelEngine";
 
+export function sanitizeSttOutput(text: string): string {
+  if (!text) return "";
+  const sanitized = text
+    .replace(/\bi['’]?m\s+next\b/gi, "Omnix")
+    .replace(/\bi['’]?m\s+nix\b/gi, "Omnix");
+  
+  const trimmed = sanitized.trim().toLowerCase().replace(/[.,?!]/g, "");
+  if (trimmed === "you") {
+    return "";
+  }
+  return sanitized;
+}
+
 export function useSpeechToText(
   addLog: (msg: string, type?: "info" | "error" | "success") => void,
   setInput: (val: string | ((prev: string) => string)) => void,
@@ -50,9 +63,9 @@ export function useSpeechToText(
       });
       
       if (typeof result === "string") {
-        transcribedText = result;
+        transcribedText = sanitizeSttOutput(result);
       } else if (result && typeof result === "object" && (result as any).text) {
-        transcribedText = (result as any).text;
+        transcribedText = sanitizeSttOutput((result as any).text);
       }
       
       if (transcribedText) {
@@ -79,9 +92,10 @@ export function useSpeechToText(
       });
       const data = await res.json();
       if (data.text) {
+        const sanitized = sanitizeSttOutput(data.text);
         setInput(prev => {
           const base = prev.trim();
-          return base ? `${base} ${data.text.trim()}` : data.text.trim();
+          return base ? `${base} ${sanitized.trim()}` : sanitized.trim();
         });
         addLog("Transcription complete (Server Relay Backup).", "success");
       }

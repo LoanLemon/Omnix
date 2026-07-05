@@ -14,10 +14,11 @@ export function useInferenceOrchestrator(
     music: number;
   },
   loadModel: (category: string) => void,
-  enableMMRS?: boolean
+  enableMMRS?: boolean,
+  isRemoteProcessing?: boolean
 ) {
   useEffect(() => {
-    if (isModelLoading || enableMMRS) return;
+    if (isModelLoading || enableMMRS || isRemoteProcessing) return;
     
     const textCategories = ["text", "director", "coder"];
     const isTextActive = textCategories.includes(activeCategory);

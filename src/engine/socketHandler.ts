@@ -55,6 +55,7 @@ interface PendingTask {
   options: any;
   resolve: (data: any) => void;
   reject: (err: any) => void;
+  onUpdate?: (data: any) => void;
   timeout: NodeJS.Timeout;
   workerId: string | null;
   retries: number;
@@ -64,7 +65,7 @@ interface PendingTask {
 
 const pendingTasks = new Map<string, PendingTask>();
 let workers: Worker[] = [];
-const taskQueue: { category: string; input: any; options: any; resolve: any; reject: any; requestId: string; priority: number; createdAt: number; retries: number }[] = [];
+const taskQueue: { category: string; input: any; options: any; resolve: any; reject: any; onUpdate?: (data: any) => void; requestId: string; priority: number; createdAt: number; retries: number }[] = [];
 
 const MAX_QUEUE_SIZE = 1000;
 const MAX_WAIT_TIME = 300000; // 5 minutes in queue max
@@ -118,6 +119,9 @@ setInterval(() => {
 }, 5000);
 
 function requeueTask(task: any) {
+  if (task.timeout) {
+    clearTimeout(task.timeout);
+  }
   if (task.retries < 3) {
     console.log(`🔄 Re-queueing task: ${task.requestId} (Retry ${task.retries + 1}/3)`);
     taskQueue.push({ 
@@ -212,6 +216,13 @@ export function setupWebSockets() {
           }
         }
 
+        if (type === "TASK_UPDATE") {
+          const pending = pendingTasks.get(requestId);
+          if (pending && pending.onUpdate) {
+            pending.onUpdate(payload.data);
+          }
+        }
+
         if (type === "TASK_RESULT") {
           if (currentWorker) {
             currentWorker.activeTasks = Math.max(0, currentWorker.activeTasks - 1);
@@ -277,7 +288,7 @@ function processQueue() {
     taskQueue.splice(tasksProcessed, 1);
     
     bestWorker.activeTasks++;
-    const { category, input, options, requestId, resolve, reject, retries, priority, createdAt } = nextTask;
+    const { category, input, options, requestId, resolve, reject, retries, priority, createdAt, onUpdate } = nextTask;
 
     const timeout = setTimeout(() => {
       const pending = pendingTasks.get(requestId);
@@ -296,6 +307,7 @@ function processQueue() {
       options,
       resolve, 
       reject, 
+      onUpdate,
       timeout,
       workerId: bestWorker.id,
       retries,
@@ -318,9 +330,17 @@ export async function dispatchTask(category: string, input: any, options: any = 
   const reqId = String(rawReqId);
   options.reqId = reqId;
 
-  if (category === "text" || category === "vision") {
+  if (category === "text" || category === "vision" || category === "livews") {
     const history = reqIdChatHistories.get(reqId) || [];
-    const chatHistory = [...history, { role: "user" as const, content: category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : masonStringify(input, 0, undefined, { compact: true })) }];
+    let userContent = "";
+    if (category === "vision") {
+        userContent = options.prompt || "Analyze this image";
+    } else if (category === "livews") {
+        userContent = input.text || (input.audio ? "[Audio Input]" : "Speak with me");
+    } else {
+        userContent = typeof input === "string" ? input : masonStringify(input, 0, undefined, { compact: true });
+    }
+    const chatHistory = [...history, { role: "user" as const, content: userContent }];
     options.chatHistory = chatHistory;
     console.log(`💬 Injected ${history.length} isolation history nodes for reqId: ${reqId}`);
   }
@@ -342,7 +362,7 @@ export async function dispatchTask(category: string, input: any, options: any = 
     }
   }
 
-  const isLocal = !webdomain || webdomain === "localhost" || webdomain === "127.0.0.1" || webdomain === "::1";
+  const isLocal = !webdomain || webdomain === "localhost" || webdomain === "127.0.0.1" || webdomain === "::1" || !!options.isLocalHost;
 
   if (!isLocal) {
     if (permissions[webdomain] === "deny") {
@@ -355,6 +375,12 @@ export async function dispatchTask(category: string, input: any, options: any = 
         allowedOnceGrace.delete(webdomain);
       } else {
         console.log(`🔐 Inbound API request from external domain '${webdomain}' detected. Prompting user...`);
+        
+        if (process.send) {
+          console.log("Foregrounding Omnix for inbound connection approval...");
+          process.send({ type: "FOREGROUND_REQUEST" });
+        }
+
         const authId = uuidv4();
         
         const approved = await new Promise<boolean>((resolveAuth) => {
@@ -463,14 +489,25 @@ export async function dispatchTask(category: string, input: any, options: any = 
       resolve: (data: any) => { 
         clearTimeout(queueTimeout); 
         cleanupAbort();
-        if (reqId && (category === "text" || category === "vision")) {
+        if (reqId && (category === "text" || category === "vision" || category === "livews")) {
           const history = reqIdChatHistories.get(reqId) || [];
-          const userContent = category === "vision" ? (options.prompt || "Analyze this image") : (typeof input === "string" ? input : masonStringify(input, 0, undefined, { compact: true }));
+          let userContent = "";
+          if (category === "vision") {
+              userContent = options.prompt || "Analyze this image";
+          } else if (category === "livews") {
+              userContent = (data && data.transcribed) ? data.transcribed : (input.text || (input.audio ? "[Audio Input]" : "Speak with me"));
+          } else {
+              userContent = typeof input === "string" ? input : masonStringify(input, 0, undefined, { compact: true });
+          }
           let assistantContent = "";
           if (typeof data === "string") {
             assistantContent = data;
           } else if (data && typeof data === "object") {
-            assistantContent = data.response || masonStringify(data, 0, undefined, { compact: true });
+            if (category === "livews" && data.text) {
+              assistantContent = data.text;
+            } else {
+              assistantContent = data.response || masonStringify(data, 0, undefined, { compact: true });
+            }
           }
           history.push({ role: "user", content: userContent });
           history.push({ role: "assistant", content: assistantContent });
@@ -501,6 +538,7 @@ export async function dispatchTask(category: string, input: any, options: any = 
         }
         reject(err); 
       }, 
+      onUpdate: options.onUpdate,
       requestId,
       priority: options.priority || 0,
       createdAt: Date.now(),
@@ -524,7 +562,7 @@ export function purgeReqIdHistory(reqId: string) {
   console.log(`🧹 Explicitly purged history index for reqId: ${reqId}`);
 }
 
-export async function handleHealthCheck(origin: string): Promise<{ allowed: boolean; error?: string }> {
+export async function handleHealthCheck(origin: string, isLocalHost?: boolean): Promise<{ allowed: boolean; error?: string }> {
   let webdomain = "";
   if (origin && origin !== "unknown") {
     try {
@@ -535,7 +573,7 @@ export async function handleHealthCheck(origin: string): Promise<{ allowed: bool
     }
   }
 
-  const isLocal = !webdomain || webdomain === "localhost" || webdomain === "127.0.0.1" || webdomain === "::1";
+  const isLocal = !webdomain || webdomain === "localhost" || webdomain === "127.0.0.1" || webdomain === "::1" || !!isLocalHost;
 
   if (isLocal) {
     return { allowed: true };
@@ -550,6 +588,12 @@ export async function handleHealthCheck(origin: string): Promise<{ allowed: bool
   }
 
   console.log(`🔐 Inbound health check request from external domain '${webdomain}' detected. Prompting user...`);
+
+  if (process.send) {
+    console.log("Foregrounding Omnix for inbound connection approval...");
+    process.send({ type: "FOREGROUND_REQUEST" });
+  }
+
   const authId = uuidv4();
 
   const approved = await new Promise<boolean>((resolveAuth) => {

@@ -1,6 +1,6 @@
 {
   "name": "omnix",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "type": "module",
   "main": "electron/main.js",
   "description":"A high-performance local AI orchestration studio. Run vision, speech, and coding models privately on your device using WebGPU and Transformers.js.",
@@ -21,6 +21,7 @@
   },
   "build": {
     "appId": "com.lemone.omnix",
+    "icon": "electron/icon.png",
     "productName": "Omnix",
     "directories": {
       "output": "dist_electron"
@@ -36,7 +37,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "electron/icon.ico"
+      "icon": "electron/icon.png"
     },
     "mac": {
       "target": [

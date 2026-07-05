@@ -73,6 +73,7 @@ export class BrowserModelEngine {
       }
     }
     this.initWorker("main");
+    this.restartIdleTimer();
   }
 
   getCurrentModelId(): string | null {
@@ -111,11 +112,13 @@ export class BrowserModelEngine {
     
     if (this.idleLimitMinutes <= 0) return;
     
-    // Only start idle timer if there are no pending requests and at least one model is active
-    if (this.pendingRequests.size === 0 && (this.currentModelId || this.currentOpModelId || this.hasDirector || this.hasStt || this.hasTts || this.hasEmbedding)) {
+    const hasActiveWorkers = Array.from(this.workers.values()).some(w => w !== null);
+    
+    // Only start idle timer if there are no pending requests and at least one model or worker is active
+    if (this.pendingRequests.size === 0 && (hasActiveWorkers || this.currentModelId || this.currentOpModelId || this.hasDirector || this.hasStt || this.hasTts || this.hasEmbedding)) {
       console.log(`⏱️ Starting ${this.idleLimitMinutes}-minute idle unload timer...`);
       this.idleTimeoutId = setTimeout(async () => {
-        console.log(`💤 App idle for ${this.idleLimitMinutes} minutes. Unloading active models to free up GPU/RAM memory...`);
+        console.log(`💤 App idle for ${this.idleLimitMinutes} minutes. Unloading active models and workers to free up GPU/RAM memory...`);
         try {
           await this.clear();
           if (this.onIdleUnloadCallback) {
@@ -139,6 +142,7 @@ export class BrowserModelEngine {
     } else {
       this.initWorker("main");
     }
+    this.restartIdleTimer();
     this.notify();
   }
 

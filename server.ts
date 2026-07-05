@@ -55,6 +55,17 @@ const isGlobalAccessEnabled =
 
 const HOST = (isContainer || isGlobalAccessEnabled) ? "0.0.0.0" : "127.0.0.1";
 
+function checkIsLocalHost(req: any): boolean {
+  const ip = req.ip || "";
+  const remoteAddress = req.socket?.remoteAddress || "";
+  const isLocalIP = (addr: string) => 
+    addr === "127.0.0.1" || 
+    addr === "::1" || 
+    addr === "::ffff:127.0.0.1" || 
+    addr.toLowerCase() === "localhost";
+  return isLocalIP(ip) || isLocalIP(remoteAddress);
+}
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 async function startServer() {
@@ -231,7 +242,8 @@ async function startServer() {
   app.get("/api/health", async (req, res) => {
     try {
       const origin = req.headers.origin || req.headers.referer || "unknown";
-      const check = await handleHealthCheck(origin);
+      const isLocalHost = checkIsLocalHost(req);
+      const check = await handleHealthCheck(origin, isLocalHost);
       if (!check.allowed) {
         return res.status(403).json({ error: check.error || "Blocked by permission policy" });
       }
@@ -319,6 +331,7 @@ async function startServer() {
         maxTokens,
         isolatedRAG,
         ocean,
+        isLocalHost: checkIsLocalHost(req),
         abortSignal: (req as any).abortSignal
       });
       
@@ -371,7 +384,7 @@ async function startServer() {
       console.log(`\n🚀 [API] Processing Director Request [reqId: ${reqId || 'none'}]`);
       console.log(`   - Origin: ${origin}`);
       
-      const intent = await dispatchTask("director", prompt, { origin, reqId, abortSignal: (req as any).abortSignal });
+      const intent = await dispatchTask("director", prompt, { origin, reqId, isLocalHost: checkIsLocalHost(req), abortSignal: (req as any).abortSignal });
       res.json({ intent, prompt });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -429,6 +442,7 @@ async function startServer() {
         metadata: metadata || {},
         origin,
         reqId,
+        isLocalHost: checkIsLocalHost(req),
         abortSignal: (req as any).abortSignal
       });
 
@@ -509,6 +523,7 @@ async function startServer() {
         maxTokens,
         isolatedRAG,
         ocean,
+        isLocalHost: checkIsLocalHost(req),
         abortSignal: (req as any).abortSignal
       });
 
@@ -550,6 +565,19 @@ async function startServer() {
   });
 
   // Speech-to-Text
+  function sanitizeSttOutput(text: string): string {
+    if (!text) return "";
+    const sanitized = text
+      .replace(/\bi['’]?m\s+next\b/gi, "Omnix")
+      .replace(/\bi['’]?m\s+nix\b/gi, "Omnix");
+    
+    const trimmed = sanitized.trim().toLowerCase().replace(/[.,?!]/g, "");
+    if (trimmed === "you") {
+      return "";
+    }
+    return sanitized;
+  }
+
   app.post("/api/stt", upload.single("audio"), async (req: any, res) => {
     try {
       const file = req.file;
@@ -563,9 +591,18 @@ async function startServer() {
       console.log(`   - Origin: ${origin}`);
       
       const base64Audio = file.buffer.toString('base64');
-      const text = await dispatchTask("stt", base64Audio, { origin, reqId, abortSignal: (req as any).abortSignal });
+      const text = await dispatchTask("stt", base64Audio, { origin, reqId, isLocalHost: checkIsLocalHost(req), abortSignal: (req as any).abortSignal });
 
-      res.json({ text });
+      let sanitizedText = text;
+      if (typeof text === "string") {
+        sanitizedText = sanitizeSttOutput(text);
+      } else if (text && typeof text === "object" && (text as any).text !== undefined) {
+        (text as any).text = sanitizeSttOutput((text as any).text);
+        sanitizedText = text;
+      }
+
+      const finalOutput = typeof sanitizedText === "string" ? sanitizedText : (sanitizedText?.text || sanitizedText);
+      res.json({ text: finalOutput });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -627,7 +664,7 @@ async function startServer() {
       console.log(`   - Voice Model: ${selectedVoice}`);
       console.log(`   - Origin: ${origin}`);
 
-      const output = await dispatchTask("tts", text, { voiceID: selectedVoice, origin, reqId, abortSignal: (req as any).abortSignal });
+      const output = await dispatchTask("tts", text, { voiceID: selectedVoice, origin, reqId, isLocalHost: checkIsLocalHost(req), abortSignal: (req as any).abortSignal });
       
       if (output && output.audio) {
         const samples = Array.isArray(output.audio) ? output.audio : Object.values(output.audio) as number[];
@@ -680,7 +717,7 @@ async function startServer() {
       console.log(`   - Model: ${modelId || 'auto-selected (default)'}`);
       console.log(`   - Origin: ${origin}`);
       
-      const image = await dispatchTask("image-gen", prompt, { modelId, qtype, origin, reqId, abortSignal: (req as any).abortSignal });
+      const image = await dispatchTask("image-gen", prompt, { modelId, qtype, origin, reqId, isLocalHost: checkIsLocalHost(req), abortSignal: (req as any).abortSignal });
       
       let finalImage = image;
       if (image && image.__serialized_type__ === "RawImage" && image.data) {
@@ -765,7 +802,7 @@ async function startServer() {
       console.log(`   - Model: ${modelId || 'auto-selected (default)'}`);
       console.log(`   - Origin: ${origin}`);
       
-      const output = await dispatchTask("music-gen", prompt, { modelId, qtype, origin, reqId, maxTokens, abortSignal: (req as any).abortSignal });
+      const output = await dispatchTask("music-gen", prompt, { modelId, qtype, origin, reqId, maxTokens, isLocalHost: checkIsLocalHost(req), abortSignal: (req as any).abortSignal });
       res.json({ status: "success", ...output });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

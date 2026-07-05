@@ -170,6 +170,14 @@ function startBackgroundServer() {
             if (msg && msg.type === 'SPAWN_WORKER') {
               sendLogToWindow('Omnix Console: Server requested a compute worker spawn.', 'info');
               createWorkerWindow();
+            } else if (msg && msg.type === 'FOREGROUND_REQUEST') {
+              sendLogToWindow('Omnix Console: Server requested foreground focus.', 'info');
+              if (mainWindow) {
+                mainWindow.show();
+                mainWindow.restore();
+                mainWindow.focus();
+                app.focus({ steal: true });
+              }
             }
           });
 

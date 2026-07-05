@@ -20,7 +20,8 @@ export async function handleTextInference(
     let messages: any[] = [];
     if (options.chatHistory && Array.isArray(options.chatHistory)) {
       const hasSystem = options.chatHistory.some((m: any) => m.role === "system");
-      if (!hasSystem && options.systemPrompt) {
+      const isLiveWS = !!options.isLiveWS;
+      if (!isLiveWS && !hasSystem && options.systemPrompt) {
         messages.push({ role: "system", content: options.systemPrompt });
       }
       options.chatHistory.forEach((m: any) => {
@@ -48,6 +49,9 @@ export async function handleTextInference(
           messages.push({ role: "model", content: textContent });
         }
       });
+      if (isLiveWS && !hasSystem && options.systemPrompt) {
+        messages.push({ role: "system", content: options.systemPrompt });
+      }
     } else if (isMultimodal) {
       if (options.systemPrompt) {
         messages.push({ role: "system", content: options.systemPrompt });
@@ -221,7 +225,8 @@ export async function handleTextInference(
       const messages = [];
       if (options.chatHistory && Array.isArray(options.chatHistory)) {
         const hasSystem = options.chatHistory.some((m: any) => m.role === "system");
-        if (!hasSystem) {
+        const isLiveWS = !!options.isLiveWS;
+        if (!isLiveWS && !hasSystem) {
           if (options.systemPrompt) {
             messages.push({ role: "system", content: options.systemPrompt });
           } else {
@@ -239,6 +244,13 @@ export async function handleTextInference(
             messages.push({ role: m.role, content: textContent });
           }
         });
+        if (isLiveWS && !hasSystem) {
+          if (options.systemPrompt) {
+            messages.push({ role: "system", content: options.systemPrompt });
+          } else {
+            messages.push({ role: "system", content: "You are a helpful assistant." });
+          }
+        }
       } else {
         if (options.systemPrompt) {
           messages.push({ role: "system", content: options.systemPrompt });

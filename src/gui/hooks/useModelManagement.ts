@@ -55,6 +55,11 @@ export function useModelManagement(
       id = selectedModels.text;
     }
 
+    if (category === "livews") {
+      actualCategory = "text";
+      id = modelId || selectedModels.text;
+    }
+
     let modelInfo = filteredModelsList.find((m) => m.id === id);
     
     if (modelInfo && getRequiredRamForModel(modelInfo, selectedQtypes[id]) > systemRam) {

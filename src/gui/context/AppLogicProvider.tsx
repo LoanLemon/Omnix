@@ -531,6 +531,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     hasWebGPU
   } = useSystemStats(addLog);
 
+  const [isRemoteProcessing, setIsRemoteProcessing] = useState(false);
+
   useEffect(() => {
     browserEngine.init().then(() => {
       if (browserEngine.useLocalServerApi) {
@@ -683,7 +685,10 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setMessages,
     setLoadingProgress,
     setWorkerCount,
-    enableRelayMode || isElectron
+    enableRelayMode || isElectron,
+    setIsRemoteProcessing,
+    loadModel,
+    selectedModels
   );
 
   const { processSpeechQueue, feedSpeechToken, flushSpeech } = useSpeechManagement(
@@ -783,7 +788,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
 
   // --- Mode Sync: Auto-load or switch model based on active chat/coder mode ---
   useEffect(() => {
-    if (!isRamDetected || isModelLoading || error) return;
+    if (!isRamDetected || isModelLoading || isRemoteProcessing || error) return;
 
     let targetCategory = "text";
     
@@ -829,7 +834,7 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
       addLog(`System: Mode switch to ${isCoderMode ? 'Coder' : chatMode} detected. Loading model for ${targetCategory}...`, "info");
       loadModel(targetCategory);
     }
-  }, [isRamDetected, isCoderMode, chatMode, activeCategory, loadedModelId, isModelLoading, loadModel, addLog, error, selectedModels]);
+  }, [isRamDetected, isCoderMode, chatMode, activeCategory, loadedModelId, isModelLoading, isRemoteProcessing, loadModel, addLog, error, selectedModels]);
 
   // Orchestrate model switching based on queues
   useInferenceOrchestrator(
@@ -846,7 +851,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
       music: musicModelQueue.length
     },
     loadModel,
-    enableMMRS
+    enableMMRS,
+    isRemoteProcessing
   );
 
   const { analyzeImage } = useAppHandlers(
