@@ -36,6 +36,8 @@ export class WorkerModelEngine {
 
   public Gemma4ForConditionalGeneration: any = null;
   public MusicgenForConditionalGeneration: any = null;
+  public VoxtralForConditionalGeneration: any = null;
+  public VoxtralProcessor: any = null;
 
   async init() {
     try {
@@ -44,6 +46,10 @@ export class WorkerModelEngine {
       this.Gemma4ForConditionalGeneration = transformers.Gemma4ForConditionalGeneration;
       // @ts-ignore
       this.MusicgenForConditionalGeneration = transformers.MusicgenForConditionalGeneration;
+      // @ts-ignore
+      this.VoxtralForConditionalGeneration = transformers.VoxtralForConditionalGeneration;
+      // @ts-ignore
+      this.VoxtralProcessor = transformers.VoxtralProcessor;
     } catch (e) {
       console.error("Failed to load special model classes in worker:", e);
     }
@@ -362,6 +368,23 @@ export class WorkerModelEngine {
           this.processor = await AutoTokenizer.from_pretrained(info.modelID);
         }
         this.model = await (this.Gemma4ForConditionalGeneration as any).from_pretrained(info.modelID, options);
+      } else if (info.id.toLowerCase().includes("voxtral")) {
+        if (!this.VoxtralForConditionalGeneration) await this.init();
+        const ProcessorClass = this.VoxtralProcessor || AutoProcessor;
+        const ModelClass = this.VoxtralForConditionalGeneration || (this.Gemma4ForConditionalGeneration || MultiModalityCausalLM);
+        
+        console.log(`🎙️ (Worker) Loading Voxtral model with custom class mapping...`);
+        this.processor = await ProcessorClass.from_pretrained(info.modelID);
+        
+        let voxtralOptions = { ...options };
+        if (options.device === "webgpu") {
+          voxtralOptions.dtype = {
+            embed_tokens: "fp16",
+            audio_encoder: options.dtype || "q4",
+            decoder_model_merged: options.dtype || "q4",
+          };
+        }
+        this.model = await ModelClass.from_pretrained(info.modelID, voxtralOptions);
       } else if (category === "image-gen") {
         this.pipeline = await (pipeline as any)("image-to-image", info.modelID, options);
       } else if (category === "stt") {

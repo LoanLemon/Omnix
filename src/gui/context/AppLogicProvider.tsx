@@ -56,6 +56,12 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setEnableFocusTopics,
     thinkEnabled,
     setThinkEnabled,
+    researchEnabled,
+    setResearchEnabled,
+    liveResearchEnabled,
+    setLiveResearchEnabled,
+    researchSrc,
+    setResearchSrc,
     enableMMRS,
     setEnableMMRS,
     mmrsModel,
@@ -728,6 +734,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     longTermMemories,
     pendingImage,
     setPendingImage,
+    activeResearch,
+    setActiveResearch,
     handleSend,
     handleSendInternal
   } = useChatLogic(
@@ -772,7 +780,10 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     enableMMRS,
     feedSpeechToken,
     flushSpeech,
-    speakEnabled
+    speakEnabled,
+    researchEnabled,
+    liveResearchEnabled,
+    researchSrc
   );
 
   // Reset error when mode changes explicitly
@@ -991,6 +1002,10 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     focusTopics, setFocusTopics,
     emotionalState, setEmotionalState,
     thinkEnabled, setThinkEnabled,
+    researchEnabled, setResearchEnabled,
+    liveResearchEnabled, setLiveResearchEnabled,
+    researchSrc, setResearchSrc,
+    activeResearch, setActiveResearch,
     enableMMRS, setEnableMMRS,
     mmrsModel, setMmrsModel,
     mmrsMode, setMmrsMode,

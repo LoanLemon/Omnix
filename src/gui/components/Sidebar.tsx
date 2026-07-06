@@ -60,6 +60,12 @@ export function Sidebar({
     setEnableFocusTopics,
     thinkEnabled,
     setThinkEnabled,
+    researchEnabled,
+    setResearchEnabled,
+    liveResearchEnabled,
+    setLiveResearchEnabled,
+    researchSrc,
+    setResearchSrc,
     relayActive,
     isApiServerActive,
     startRelayServer,
@@ -613,6 +619,46 @@ export function Sidebar({
                   className="scale-75 data-[state=checked]:bg-orange-600 ml-[-4px]"
                 />
               </div>
+              <div className="space-y-2">
+                <span className="text-[8px] font-mono text-muted-foreground/50 uppercase">RESEARCH</span>
+                <Switch 
+                  checked={researchEnabled} 
+                  onCheckedChange={setResearchEnabled}
+                  className="scale-75 data-[state=checked]:bg-blue-600 ml-[-4px]"
+                  title="Enable Experimental Research Tool"
+                />
+              </div>
+              {researchEnabled && (
+                <div className="col-span-2 border border-blue-500/20 bg-blue-500/5 p-2.5 rounded-sm space-y-3 mt-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] font-mono font-semibold text-blue-400">LIVE RESEARCH</span>
+                    <Switch
+                      checked={liveResearchEnabled}
+                      onCheckedChange={setLiveResearchEnabled}
+                      className="scale-75 data-[state=checked]:bg-blue-600"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[8px] font-mono text-muted-foreground/70 uppercase">RESEARCH SRC</div>
+                    <Select value={researchSrc} onValueChange={(val) => setResearchSrc(val || "")}>
+                      <SelectTrigger className="h-7 w-full bg-zinc-900 border-border/50 text-[10px] text-foreground font-mono rounded-none">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-zinc-950 border border-border/50 text-foreground text-[10px] font-mono shadow-md">
+                        <SelectItem value="https://duckduckgo.com/?q=[query]&ia=web">
+                          DuckDuckGo
+                        </SelectItem>
+                        <SelectItem value="https://yandex.com/search/?text=[query]&lr=87&search_source=yacom_desktop_common">
+                          Yandex
+                        </SelectItem>
+                        <SelectItem value="https://search.yahoo.com/search?p=[query]">
+                          Yahoo
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
               <div className="space-y-2">
                 <span className="text-[8px] font-mono text-muted-foreground/50 uppercase">FOCUS_TOPICS</span>
                 <Switch 

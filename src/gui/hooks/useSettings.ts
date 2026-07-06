@@ -87,6 +87,21 @@ export function useSettings() {
     return saved === "true";
   });
 
+  const [researchEnabled, setResearchEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_research_enabled");
+    return saved === "true";
+  });
+
+  const [liveResearchEnabled, setLiveResearchEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_live_research_enabled");
+    return saved === "true";
+  });
+
+  const [researchSrc, setResearchSrc] = useState<string>(() => {
+    const saved = localStorage.getItem("omnix_research_src");
+    return saved || "https://duckduckgo.com/?q=[query]&ia=web";
+  });
+
   const [enableMMRS, setEnableMMRS] = useState<boolean>(() => {
     const saved = localStorage.getItem("omnix_enable_mmrs");
     return saved === "true"; // default to false
@@ -179,6 +194,18 @@ export function useSettings() {
   }, [thinkEnabled]);
 
   useEffect(() => {
+    localStorage.setItem("omnix_research_enabled", researchEnabled.toString());
+  }, [researchEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_live_research_enabled", liveResearchEnabled.toString());
+  }, [liveResearchEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_research_src", researchSrc);
+  }, [researchSrc]);
+
+  useEffect(() => {
     localStorage.setItem("omnix_enable_mmrs", enableMMRS.toString());
   }, [enableMMRS]);
 
@@ -255,6 +282,12 @@ export function useSettings() {
     setEnableFocusTopics,
     thinkEnabled,
     setThinkEnabled,
+    researchEnabled,
+    setResearchEnabled,
+    liveResearchEnabled,
+    setLiveResearchEnabled,
+    researchSrc,
+    setResearchSrc,
     enableMMRS,
     setEnableMMRS,
     mmrsModel,

@@ -16,6 +16,7 @@ import { PreviewSidebar } from "@/components/PreviewSidebar";
 import { WorkflowTracker } from "@/components/WorkflowTracker";
 import { ErrorOverlay } from "@/components/ErrorOverlay";
 import { AuthPromptModal } from "@/components/AuthPromptModal";
+import { LiveResearchPopup } from "@/components/LiveResearchPopup";
 
 function AppContent() {
   const {
@@ -223,6 +224,8 @@ function AppContent() {
         activeAuthRequest={activeAuthRequest}
         respondToAuth={respondToAuth}
       />
+
+      <LiveResearchPopup />
     </div>
   );
 }

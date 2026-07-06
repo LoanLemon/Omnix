@@ -8,7 +8,7 @@ export interface ModelInfo {
   size?: string;
   dtype?: string;
   qtypes?: string[];
-  category: "text" | "vision" | "tts" | "image-gen" | "stt" | "music-gen" | "director" | "coder" | "embedding";
+  category: "live" | "text" | "vision" | "tts" | "image-gen" | "stt" | "music-gen" | "director" | "coder" | "embedding";
   make?: string;
   minRam?: number; // Minimum RAM in GB
   maxContextChars?: number; // Maximum safe context length in characters
@@ -143,7 +143,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     "id": "llama-3.2-3b-q4",
-    "modelID": "LemOneLabs/Llama-3.2-3B-Instruct",
+    "modelID": "LemOneLabs/Llama-3.2-3B-Instruct-GENAI-ONNX",
     "name": "Llama 3.2 3B",
     "description": "Meta's flagship small model. Excellent reasoning and instruction following.",
     "size": "~2.2GB",
@@ -178,6 +178,58 @@ export const MODELS: ModelInfo[] = [
     "category": "text",
     "make": "GOOGLE",
     "minRam": 6,
+    "maxContextChars": 16384
+  },
+  {
+    "id": "qwen-3-4b-q4",
+    "modelID": "LemOneLabs/Qwen3-4B-ONNX",
+    "name": "Qwen 3 4B",
+    "description": "Next-generation 4B Qwen model with incredible reasoning and broad multilingual capacity.",
+    "size": "~2.8GB",
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16" ],
+    "category": "text",
+    "make": "QWEN",
+    "minRam": 4,
+    "maxContextChars": 16384
+  },
+  {
+    "id": "bonsai-8b-q4",
+    "modelID": "LemOneLabs/Bonsai-8B-ONNX",
+    "name": "Bonsai 8B",
+    "description": "Meta Llama-3 based flagship 8B model. Highly optimized for broad reasoning, math, and logical synthesis.",
+    "size": "~5.5GB",
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16" ],
+    "category": "text",
+    "make": "Bonsai",
+    "minRam": 8,
+    "maxContextChars": 32768
+  },
+  {
+    "id": "voxtral-mini-3b-q4",
+    "modelID": "LemOneLabs/Voxtral-Mini-3B-2507-ONNX",
+    "name": "Voxtral Mini 3B",
+    "description": "Voxtral Mini (3B) is an audio-text multimodal enhancement of Ministral 3B with state-of-the-art audio transcription and understanding.",
+    "size": "~2.2GB",
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16" ],
+    "category": "live",
+    "make": "Mistral",
+    "minRam": 3,
+    "maxContextChars": 16384
+  },
+  {
+    "id": "voxtral-mini-4b-realtime-q4",
+    "modelID": "LemOneLabs/Voxtral-Mini-4B-Realtime-2602-ONNX",
+    "name": "Voxtral Mini 4B Realtime",
+    "description": "Realtime enhanced Voxtral 4B with low latency audio streaming, understanding and state-of-the-art multilingual support.",
+    "size": "~3.2GB",
+    "dtype": "q4f16",
+    "qtypes": ["q4f16", "fp16" ],
+    "category": "live",
+    "make": "Mistral",
+    "minRam": 4,
     "maxContextChars": 16384
   },
 
@@ -246,6 +298,18 @@ export const MODELS: ModelInfo[] = [
     category: "stt",
     make: "OPENAI",
     minRam: 1,
+  },
+  {
+    id: "whisper-large-v3-turbo",
+    modelID: "LemOneLabs/whisper-large-v3-turbo",
+    name: "Whisper Large V3 Turbo",
+    description: "OpenAI's Whisper Large V3 Turbo model. Exceptional accuracy and native multilingual speech-to-text.",
+    size: "~800MB",
+    dtype: "q4",
+    qtypes: ["q4f16", "q4", "fp16", "fp32"],
+    category: "stt",
+    make: "OPENAI",
+    minRam: 4,
   },
   {
     id: "musicgen-small",

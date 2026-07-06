@@ -12,16 +12,42 @@ export function useModelManagement(
 ) {
   const filteredModelsList = MODELS;
 
-  const [selectedModels, setSelectedModels] = useState<Record<string, string>>({
-    text: "qwen-3-0.6b-q4-text",
-    vision: "FastVLM",
-    stt: "whisper-tiny-en",
-    tts: "kokoro-82m",
-    "image-gen": "Janus-Pro-1B-ONNX",
-    "music-gen": "musicgen-small",
-    director: "use-text-model",
-    coder: "qwen-2.5-coder-3b-q4",
+  const [selectedModels, setSelectedModels] = useState<Record<string, string>>(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("omnix_selected_models") : null;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return {
+          text: parsed.text || "LFM2-1.2B-ONNX",
+          vision: parsed.vision || "FastVLM",
+          stt: parsed.stt || "whisper-tiny-en",
+          tts: parsed.tts || "kokoro-82m",
+          "image-gen": parsed["image-gen"] || "Janus-Pro-1B-ONNX",
+          "music-gen": parsed["music-gen"] || "musicgen-small",
+          director: parsed.director || "use-text-model",
+          coder: parsed.coder || "qwen-2.5-coder-3b-q4",
+        };
+      } catch (e) {
+        // Fallback below
+      }
+    }
+    return {
+      text: "LFM2-1.2B-ONNX",
+      vision: "FastVLM",
+      stt: "whisper-tiny-en",
+      tts: "kokoro-82m",
+      "image-gen": "Janus-Pro-1B-ONNX",
+      "music-gen": "musicgen-small",
+      director: "use-text-model",
+      coder: "qwen-2.5-coder-3b-q4",
+    };
   });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("omnix_selected_models", JSON.stringify(selectedModels));
+    }
+  }, [selectedModels]);
   const [selectedQtypes, setSelectedQtypes] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     MODELS.forEach(m => {
@@ -170,7 +196,7 @@ export function useModelManagement(
           changed = true;
           let chosenModelId = possible[0].id;
           if (cat === "text") {
-            const preferred = possible.find(m => m.id === "qwen-3-0.6b-q4-text");
+            const preferred = possible.find(m => m.id === "LFM2-1.2B-ONNX") || possible.find(m => m.id === "qwen-3-0.6b-q4-text");
             chosenModelId = preferred ? preferred.id : possible[0].id;
           } else if (cat === "director") {
             const preferred = possible.find(m => m.id === "use-text-model");

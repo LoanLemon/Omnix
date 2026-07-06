@@ -1,6 +1,6 @@
 {
   "name": "omnix",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "type": "module",
   "main": "electron/main.js",
   "description":"A high-performance local AI orchestration studio. Run vision, speech, and coding models privately on your device using WebGPU and Transformers.js.",

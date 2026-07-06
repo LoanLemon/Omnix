@@ -12,7 +12,7 @@ export async function handleTextInference(
   sendProgress?: (p: any) => void,
   onToken?: (token: string) => void
 ): Promise<any> {
-  if (engine.currentModelId?.toLowerCase().includes("gemma-4")) {
+  if (engine.currentModelId?.toLowerCase().includes("gemma-4") || engine.currentModelId?.toLowerCase().includes("voxtral") || (engine.model && engine.processor)) {
     const isVision = !!input.image;
     const isAudio = !!input.audio;
     const isMultimodal = isVision || isAudio;
@@ -76,12 +76,21 @@ export async function handleTextInference(
 
     // Ensure engine.processor is loaded (self-healing / fallback)
     if (!engine.processor) {
-      console.warn("⚠️ (Worker) engine.processor was null during Gemma 4 generation. Loading on-the-fly...");
+      console.warn("⚠️ (Worker) engine.processor was null during generation. Loading on-the-fly...");
       const modelId = options.modelId;
       const modelInfo = MODELS.find(m => m.id === modelId || m.modelID === modelId || (engine.currentModelId && engine.currentModelId.includes(m.id)));
       if (modelInfo) {
         try {
-          engine.processor = await AutoProcessor.from_pretrained(modelInfo.modelID);
+          if (modelInfo.id.toLowerCase().includes("voxtral")) {
+            if (!engine.VoxtralProcessor) {
+              const transformers = await import("@huggingface/transformers");
+              engine.VoxtralProcessor = transformers.VoxtralProcessor;
+            }
+            const ProcessorClass = engine.VoxtralProcessor || AutoProcessor;
+            engine.processor = await ProcessorClass.from_pretrained(modelInfo.modelID);
+          } else {
+            engine.processor = await AutoProcessor.from_pretrained(modelInfo.modelID);
+          }
         } catch (e) {
           try {
             engine.processor = await AutoTokenizer.from_pretrained(modelInfo.modelID);
@@ -93,7 +102,7 @@ export async function handleTextInference(
     }
 
     if (!engine.processor) {
-      throw new Error("Unable to run Gemma 4 generation: Processor/Tokenizer is null and failed to load.");
+      throw new Error("Unable to run generation: Processor/Tokenizer is null and failed to load.");
     }
 
     let prompt: string = "";

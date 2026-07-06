@@ -809,6 +809,94 @@ async function startServer() {
     }
   });
 
+  // Research Scraping Proxy (Avoids browser CORS/webview limits and speeds up search)
+  app.post("/api/research", async (req, res) => {
+    try {
+      const { url, isInitialSearch } = req.body;
+      if (!url) {
+        return res.status(400).json({ error: "URL is required" });
+      }
+
+      console.log(`🔍 [API] Research Tool: Fetching ${url}`);
+
+      // Modify DuckDuckGo URL to use the html-only version if we are on the server side
+      // as it's 10x faster and doesn't require JS execution!
+      let targetUrl = url;
+      if (url.includes("duckduckgo.com") && !url.includes("html.duckduckgo.com")) {
+        targetUrl = url.replace("duckduckgo.com", "html.duckduckgo.com/html");
+      }
+
+      const response = await fetch(targetUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const html = await response.text();
+      
+      // Extract clean text from HTML
+      const cleanHtml = (rawHtml: string): string => {
+        return rawHtml
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+          .replace(/<[^>]*>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      };
+      const text = cleanHtml(html);
+      let results: string[] = [];
+
+      if (isInitialSearch) {
+        // Try parsing DuckDuckGo HTML result-link titles
+        const ddgRegex = /<a[^>]+class="[^"]*(result__snippet|result__url|result__link)[^"]*"[^>]* href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+        let match;
+        while ((match = ddgRegex.exec(html)) !== null) {
+          const title = match[3].replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+          if (title && !results.includes(title)) {
+            results.push(title);
+          }
+        }
+
+        // General h2 titles as fallback
+        if (results.length === 0) {
+          const titleRegex = /<a class="result__url"[^>]*>([\s\S]*?)<\/a>/gi;
+          while ((match = titleRegex.exec(html)) !== null) {
+            const title = match[1].replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+            if (title && !results.includes(title)) {
+              results.push(title);
+            }
+          }
+        }
+
+        // Fallback for anchors if still empty
+        if (results.length === 0) {
+          const generalRegex = /<a\s+[^>]*href="[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+          let matchCount = 0;
+          while ((match = generalRegex.exec(html)) !== null && matchCount < 20) {
+            const innerText = match[1].replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+            if (innerText.length > 15 && !innerText.toLowerCase().includes("privacy") && !innerText.toLowerCase().includes("terms")) {
+              results.push(innerText);
+              matchCount++;
+            }
+          }
+        }
+        
+        console.log(`🔍 [API] Scraped ${results.length} search results`);
+      }
+
+      res.json({ text, results });
+    } catch (error: any) {
+      console.error(`💥 [API] Research error:`, error.message);
+      res.json({ text: "", results: [] }); // Fallback graceful response
+    }
+  });
+
   // --- FRONTEND MIDDLEWARE ---
   if (process.env.NODE_ENV !== "production") {
     console.log("🛠️ Starting Vite in development mode...");

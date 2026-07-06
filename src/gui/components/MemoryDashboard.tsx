@@ -10,6 +10,7 @@ import { browserEngine } from "../lib/ModelEngine";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getToneDescriptor } from "@shared/prompts";
 
 export function MemoryDashboard() {
@@ -55,6 +56,54 @@ export function MemoryDashboard() {
 
   // Active sub-dashboard tab
   const [activeTab, setActiveTab ] = useState<"state" | "factual">("state");
+
+  // --- Memory Bank Selection & Isolation ---
+  const [selectedReqId, setSelectedReqId] = useState<string>("default");
+
+  // Find all unique reqIds/isolatedRAG that exist in stored vector memories
+  const availableReqIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    vectorMemories.forEach(entry => {
+      const ragId = entry.metadata?.isolatedRAG;
+      if (ragId && typeof ragId === "string" && ragId.trim() !== "") {
+        ids.add(ragId);
+      }
+    });
+    return Array.from(ids).sort();
+  }, [vectorMemories]);
+
+  // Compute memory count for default and individual reqIds
+  const reqIdCounts = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    let defaultCount = 0;
+    vectorMemories.forEach(entry => {
+      const ragId = entry.metadata?.isolatedRAG;
+      if (ragId && typeof ragId === "string" && ragId.trim() !== "") {
+        counts[ragId] = (counts[ragId] || 0) + 1;
+      } else {
+        defaultCount++;
+      }
+    });
+    return { counts, defaultCount };
+  }, [vectorMemories]);
+
+  // Filter memories to display based on selected bank
+  const filteredMemories = React.useMemo(() => {
+    return vectorMemories.filter(entry => {
+      const entryRag = entry.metadata?.isolatedRAG;
+      if (selectedReqId === "default") {
+        return !entryRag;
+      } else {
+        return entryRag === selectedReqId;
+      }
+    });
+  }, [vectorMemories, selectedReqId]);
+
+  // Reset search results when switching bank selection
+  useEffect(() => {
+    setSearchResults(null);
+    setSearchTerm("");
+  }, [selectedReqId]);
 
   // Save states to localStorage
   useEffect(() => {
@@ -104,11 +153,16 @@ export function MemoryDashboard() {
       // Fetch 384d embedding using our local transformers extraction engine
       const embedding = await browserEngine.getEmbedding(newFactualMemory, () => {});
       if (embedding && Array.isArray(embedding)) {
+        const metadata: any = {};
+        if (selectedReqId !== "default") {
+          metadata.isolatedRAG = selectedReqId;
+        }
         await memoryStore.add({
           id: Date.now().toString(),
           text: newFactualMemory.trim(),
           embedding,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          metadata: Object.keys(metadata).length > 0 ? metadata : undefined
         });
         await loadVectorMemories();
         setNewFactualMemory("");
@@ -134,7 +188,17 @@ export function MemoryDashboard() {
       if (qEmbedding && Array.isArray(qEmbedding)) {
         // Query database with semantic Cosine similarity (topK=5, confidence_threshold=0.3)
         const results = await memoryStore.search(qEmbedding, 5, 0.25);
-        setSearchResults(results);
+        
+        // Filter search results to the selected memory bank
+        const filteredResults = results.filter(entry => {
+          const entryRag = entry.metadata?.isolatedRAG;
+          if (selectedReqId === "default") {
+            return !entryRag;
+          } else {
+            return entryRag === selectedReqId;
+          }
+        });
+        setSearchResults(filteredResults);
       }
     } catch (e) {
       console.warn("Vector search failed:", e);
@@ -143,12 +207,38 @@ export function MemoryDashboard() {
     }
   };
 
+  const purgeCurrentBank = async () => {
+    if (selectedReqId === "default") {
+      if (confirm("Are you sure you want to flush all standard memories (Default Bank) in IndexedDB?")) {
+        const toKeep = vectorMemories.filter(m => m.metadata?.isolatedRAG);
+        await memoryStore.clear();
+        for (const m of toKeep) {
+          await memoryStore.add(m);
+        }
+        await loadVectorMemories();
+        setSearchResults(null);
+        addLog("Memory: Default standard memories purged.", "info");
+      }
+    } else {
+      if (confirm(`Are you sure you want to flush all memories for the API request bank "${selectedReqId}"?`)) {
+        const toKeep = vectorMemories.filter(m => m.metadata?.isolatedRAG !== selectedReqId);
+        await memoryStore.clear();
+        for (const m of toKeep) {
+          await memoryStore.add(m);
+        }
+        await loadVectorMemories();
+        setSearchResults(null);
+        addLog(`Memory: Purged bank "${selectedReqId}" memories.`, "info");
+      }
+    }
+  };
+
   const wipeVectorMemories = async () => {
-    if (confirm("Are you sure you want to flush all semantic memories in IndexedDB?")) {
+    if (confirm("Are you sure you want to flush ALL semantic memories across ALL banks in IndexedDB?")) {
       await memoryStore.clear();
       await loadVectorMemories();
       setSearchResults(null);
-      addLog("Memory: Semantic vector database purged.", "info");
+      addLog("Memory: Semantic vector database entirely purged.", "info");
     }
   };
 
@@ -456,6 +546,108 @@ export function MemoryDashboard() {
         {activeTab === "factual" && (
           <div className="space-y-4">
             
+            {/* Memory Bank Selector & Custom Switcher */}
+            <div className="p-4 bg-zinc-950/50 border border-border/50 rounded-sm space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-muted-foreground/80">Active Memory Bank</span>
+                <span className="text-[7.5px] font-mono text-orange-500/80 font-bold uppercase">Transaction Scope</span>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Selector */}
+                <div className="space-y-1">
+                  <label className="text-[8px] font-mono uppercase text-muted-foreground/60 block">Select Existing Bank</label>
+                  <select 
+                    value={selectedReqId} 
+                    onChange={(e) => setSelectedReqId(e.target.value || "default")}
+                    className="w-full h-8 bg-zinc-900 border border-border/50 text-foreground text-[10px] font-mono rounded-none px-2 focus:outline-none focus:border-orange-500/50 cursor-pointer"
+                  >
+                    <option value="default" className="bg-zinc-950 text-foreground text-[10px] font-mono">
+                      Default / Main Bank ({reqIdCounts.defaultCount})
+                    </option>
+                    {availableReqIds.map((reqId) => (
+                      <option key={reqId} value={reqId} className="bg-zinc-950 text-foreground text-[10px] font-mono">
+                        API Scope: {reqId} ({reqIdCounts.counts[reqId] || 0})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Custom input switcher */}
+                <div className="space-y-1">
+                  <label className="text-[8px] font-mono uppercase text-muted-foreground/60 block">Switch to Custom Bank</label>
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      placeholder="Enter bank ID..."
+                      id="custom-bank-input"
+                      className="bg-black/25 text-[10px] font-mono h-8 border border-border/50 px-2 text-foreground tracking-tight rounded-none focus-visible:ring-orange-500/30 flex-1 outline-none"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const target = e.currentTarget;
+                          const val = target.value.trim();
+                          if (val) {
+                            setSelectedReqId(val);
+                            target.value = "";
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      onClick={() => {
+                        const inputEl = document.getElementById("custom-bank-input") as HTMLInputElement;
+                        if (inputEl && inputEl.value.trim()) {
+                          setSelectedReqId(inputEl.value.trim());
+                          inputEl.value = "";
+                        }
+                      }}
+                      className="h-8 bg-zinc-900 border border-border hover:bg-orange-500/10 hover:border-orange-500/30 text-[9px] text-muted-foreground hover:text-orange-400 font-mono rounded-none px-2 cursor-pointer shrink-0"
+                    >
+                      SWITCH
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Badges of all available scopes to easily click & switch */}
+              {availableReqIds.length > 0 && (
+                <div className="space-y-1.5 pt-1.5 border-t border-border/20">
+                  <div className="text-[8px] font-mono uppercase text-muted-foreground/60">Quick Switch Scopes</div>
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      onClick={() => setSelectedReqId("default")}
+                      className={`px-1.5 py-0.5 font-mono text-[8.5px] rounded-sm border transition-all ${
+                        selectedReqId === "default"
+                          ? "bg-orange-500/20 border-orange-500 text-orange-400 font-bold"
+                          : "bg-zinc-900/40 border-border/30 text-muted-foreground hover:text-foreground hover:border-orange-500/30"
+                      }`}
+                    >
+                      default ({reqIdCounts.defaultCount})
+                    </button>
+                    {availableReqIds.map((reqId) => (
+                      <button
+                        key={reqId}
+                        onClick={() => setSelectedReqId(reqId)}
+                        className={`px-1.5 py-0.5 font-mono text-[8.5px] rounded-sm border transition-all ${
+                          selectedReqId === reqId
+                            ? "bg-orange-500/20 border-orange-500 text-orange-400 font-bold"
+                            : "bg-zinc-900/40 border-border/30 text-muted-foreground hover:text-foreground hover:border-orange-500/30"
+                        }`}
+                      >
+                        {reqId} ({reqIdCounts.counts[reqId] || 0})
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[8.5px] font-mono text-muted-foreground/50 leading-normal pt-1.5 border-t border-border/10">
+                {selectedReqId === "default" 
+                  ? "Displaying general/factual memories logged through standard interactions."
+                  : `Isolated memory segment active for reqId: "${selectedReqId}".`}
+              </p>
+            </div>
+
             {/* Commit Factual memories block */}
             <div className="p-4 bg-zinc-950/50 border border-border/50 rounded-sm space-y-3">
               <div className="flex justify-between items-center text-[10px] uppercase font-mono tracking-wider font-bold">
@@ -467,7 +659,9 @@ export function MemoryDashboard() {
                   value={newFactualMemory}
                   onChange={(e) => setNewFactualMemory(e.target.value)}
                   className="w-full bg-black/40 text-[10.5px] p-2 leading-tight border border-border hover:border-orange-500/20 text-foreground tracking-tight rounded-none focus-visible:ring-orange-500/30 font-mono resize-none h-16 min-h-[60px]"
-                  placeholder="Type a custom fact or memory (e.g. 'Jane plays guitar and prefers green tea over coffee')..."
+                  placeholder={selectedReqId === "default" 
+                    ? "Type a custom fact or memory (e.g. 'Jane plays guitar and prefers green tea over coffee')..."
+                    : `Type a fact to ingest into isolated memory bank: "${selectedReqId}"...`}
                 />
                 
                 <Button 
@@ -498,7 +692,7 @@ export function MemoryDashboard() {
                   <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-200">Vector Workspace</span>
                 </div>
                 <span className="text-[9px] font-mono bg-zinc-900 border border-white/5 text-zinc-400 py-0.5 px-2 tabular-nums">
-                  {vectorMemories.length} RECORDS
+                  {filteredMemories.length} / {vectorMemories.length} RECORDS
                 </span>
               </div>
 
@@ -523,8 +717,8 @@ export function MemoryDashboard() {
 
               {/* Search results or raw memory entries list */}
               <div className="space-y-2">
-                <div className="flex justify-between text-[8px] font-mono text-muted-foreground uppercase uppercase tracking-wider font-bold">
-                  <span>{searchResults !== null ? "Similarity Projection Results" : "All Durable Facts (IndexedDB list)"}</span>
+                <div className="flex justify-between text-[8px] font-mono text-muted-foreground uppercase tracking-wider font-bold">
+                  <span>{searchResults !== null ? "Similarity Projection Results" : "Durable Facts (Current Bank)"}</span>
                   {searchResults !== null && (
                     <button onClick={() => setSearchResults(null)} className="text-orange-500 hover:underline">
                       RESET_VIEW
@@ -533,7 +727,7 @@ export function MemoryDashboard() {
                 </div>
 
                 <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-0.5 custom-scrollbar">
-                  {(searchResults || vectorMemories).map((entry, idx) => (
+                  {(searchResults || filteredMemories).map((entry, idx) => (
                     <div key={entry.id || idx} className="p-2 bg-black/20 border border-white/5 font-mono text-[9px] leading-relaxed relative group flex flex-col gap-1 rounded-sm">
                       <div className="flex justify-between items-center text-[7px] text-muted-foreground/50 font-bold uppercase">
                         <div className="flex items-center gap-1">
@@ -549,29 +743,44 @@ export function MemoryDashboard() {
                       <div className="text-foreground/95 break-words font-light">
                         {entry.text}
                       </div>
+                      {entry.metadata?.isolatedRAG && (
+                        <div className="text-[7.5px] text-orange-400 font-mono font-semibold uppercase mt-0.5 flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 bg-orange-500 rounded-full animate-pulse"></span>
+                          BANK: {entry.metadata.isolatedRAG}
+                        </div>
+                      )}
                       <div className="text-[7px] text-muted-foreground/30 font-mono tracking-tighter truncate mt-0.5 pr-8">
                         VECT_384D: [{entry.embedding.slice(0, 3).map(n => n.toFixed(3)).join(", ")} ...]
                       </div>
                     </div>
                   ))}
 
-                  {(searchResults || vectorMemories).length === 0 && (
+                  {(searchResults || filteredMemories).length === 0 && (
                     <div className="text-center py-6 text-muted-foreground/35 italic font-mono text-[9.5px]">
-                      No semantic facts logged inside DB yet.
+                      No semantic facts logged inside this bank yet.
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="pt-2 border-t border-white/5 flex justify-end">
+              <div className="pt-2 border-t border-white/5 flex gap-2 justify-end">
+                <Button 
+                  onClick={purgeCurrentBank} 
+                  variant="destructive" 
+                  size="sm" 
+                  className="h-7 rounded-none bg-red-950/10 text-red-400 hover:bg-red-500/10 border border-red-500/25 text-[9px] uppercase tracking-wider font-mono gap-1 cursor-pointer font-bold leading-none"
+                >
+                  <Trash className="w-3 h-3" />
+                  Purge Current Bank
+                </Button>
                 <Button 
                   onClick={wipeVectorMemories} 
                   variant="destructive" 
                   size="sm" 
-                  className="h-7 rounded-none bg-red-950/20 text-red-400 hover:bg-red-500/10 border border-red-500/20 text-[9px] uppercase tracking-wider font-mono gap-1 cursor-pointer font-bold leading-none"
+                  className="h-7 rounded-none bg-red-950/20 text-red-400 hover:bg-red-500/10 border border-red-500/25 text-[9px] uppercase tracking-wider font-mono gap-1 cursor-pointer font-bold leading-none"
                 >
                   <Trash className="w-3 h-3" />
-                  Wipe Vector Database
+                  Wipe Entire DB
                 </Button>
               </div>
 

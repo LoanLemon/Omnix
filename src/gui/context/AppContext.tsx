@@ -45,6 +45,22 @@ interface AppContextType {
   setAllowRemote: (val: boolean) => void;
   thinkEnabled: boolean;
   setThinkEnabled: (val: boolean) => void;
+  researchEnabled: boolean;
+  setResearchEnabled: (val: boolean) => void;
+  liveResearchEnabled: boolean;
+  setLiveResearchEnabled: (val: boolean) => void;
+  researchSrc: string;
+  setResearchSrc: (val: string) => void;
+  activeResearch: {
+    query: string;
+    url: string;
+    status: string;
+    results: string[];
+    deepDiveUrls: string[];
+    currentDeepDiveIndex: number;
+    currentDeepDiveUrl: string;
+  } | null;
+  setActiveResearch: (val: any) => void;
   enableMMRS: boolean;
   setEnableMMRS: (val: boolean) => void;
   mmrsModel: "text" | "image" | "music";

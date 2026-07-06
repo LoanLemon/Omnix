@@ -285,6 +285,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      webviewTag: true,
       preload: path.join(__dirname, 'preload.cjs')
     },
   });
@@ -489,4 +490,76 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+function quadraticBezier(p0, p1, p2, t) {
+    const inv = 1 - t;
+
+    return {
+        x: inv * inv * p0.x +
+           2 * inv * t * p1.x +
+           t * t * p2.x,
+
+        y: inv * inv * p0.y +
+           2 * inv * t * p1.y +
+           t * t * p2.y
+    };
+}
+
+function randomJitter(max = 2) {
+    return {
+        x: (Math.random() * 2 - 1) * max,
+        y: (Math.random() * 2 - 1) * max
+    };
+}
+
+async function moveMouse(webContents, start, end) {
+    const control = {
+        x: (start.x + end.x) / 2 + (Math.random() - 0.5) * 120,
+        y: (start.y + end.y) / 2 + (Math.random() - 0.5) * 120
+    };
+
+    const steps = 80;
+
+    for (let i = 0; i <= steps; i++) {
+        if (webContents.isDestroyed()) return;
+        const t = i / steps;
+        const eased = 0.5 - 0.5 * Math.cos(Math.PI * t);
+
+        const p = quadraticBezier(start, control, end, eased);
+
+        // ~8% of samples receive a tiny perturbation.
+        if (Math.random() < 0.08) {
+            const j = randomJitter(1.5);
+            p.x += j.x;
+            p.y += j.y;
+        }
+
+        try {
+            webContents.sendInputEvent({
+                type: "mouseMove",
+                x: Math.round(p.x),
+                y: Math.round(p.y)
+            });
+        } catch (e) {
+            return;
+        }
+
+        await new Promise(r => setTimeout(r, 12));
+    }
+}
+
+// Watch for webview webContents being created to mock mouse movements before load
+app.on('web-contents-created', (event, contents) => {
+  if (contents.getType() === 'webview') {
+    contents.on('did-start-navigation', async (navEvent, url) => {
+      const start = { x: 50, y: 50 };
+      const end = { x: 400 + Math.floor(Math.random() * 200), y: 300 + Math.floor(Math.random() * 200) };
+      try {
+        await moveMouse(contents, start, end);
+      } catch (err) {
+        // Silently ignore if webContents is destroyed
+      }
+    });
+  }
 });

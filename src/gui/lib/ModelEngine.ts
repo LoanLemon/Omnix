@@ -48,6 +48,7 @@ export class BrowserModelEngine {
     onToken?: (token: string) => void;
     workerKey?: string;
   }> = new Map();
+  private loadedModelIdByWorker: Map<string, string> = new Map();
 
   // Keep track of lightweight load states locally for synchronous UI stats queries
   public useLocalServerApi = false;
@@ -151,6 +152,7 @@ export class BrowserModelEngine {
       if (w) w.terminate();
     }
     this.workers.clear();
+    this.loadedModelIdByWorker.clear();
     
     this.currentModelId = null;
     this.currentOpModelId = null;
@@ -282,6 +284,8 @@ export class BrowserModelEngine {
       this.workers.set(key, null);
     }
     
+    this.loadedModelIdByWorker.delete(key);
+    
     // Clear all model states so the UI knows they are unloaded
     if (!this.enableMMRS) {
       this.currentModelId = null;
@@ -376,6 +380,23 @@ export class BrowserModelEngine {
     });
   }
 
+  private ensureWorkerReadyForModel(category: string, modelId: string) {
+    if (this.useLocalServerApi) return;
+
+    const modelKey = `${category}:${modelId}`;
+    const workerKey = this.getWorkerKeyForCategory(category);
+    const hasWorker = !!this.workers.get(workerKey);
+    const currentlyLoaded = this.loadedModelIdByWorker.get(workerKey);
+    const isChanging = currentlyLoaded !== undefined && currentlyLoaded !== modelKey;
+
+    if (hasWorker && isChanging) {
+      console.log(`🔄 Model changing on worker [${workerKey}] from [${currentlyLoaded}] to [${modelKey}]. Disposing old worker and creating a new one...`);
+      this.restartWorker(workerKey);
+    }
+
+    this.loadedModelIdByWorker.set(workerKey, modelKey);
+  }
+
   async init() {
     const isElectron = typeof window !== "undefined" && !!(window as any).electron;
     if (!isElectron) {
@@ -410,6 +431,7 @@ export class BrowserModelEngine {
   }
 
   async loadModel(category: string, modelId: string, progressCallback?: (p: any) => void, customDtype?: string) {
+    this.ensureWorkerReadyForModel(category, modelId);
     const modelKey = `${category}:${modelId}`;
     if (category === "stt") {
       this.hasStt = true;
@@ -597,6 +619,7 @@ export class BrowserModelEngine {
       const resolved = normalizeAndRegisterModel(modelId, category as any);
       modelId = resolved.id;
       options.modelId = resolved.id;
+      this.ensureWorkerReadyForModel(category, modelId);
     }
     
     // Warm memory tracking states before calling worker

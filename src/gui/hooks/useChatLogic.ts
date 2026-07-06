@@ -74,6 +74,119 @@ function chunkText(text: string, maxLength: number): string[] {
   return chunks;
 }
 
+function loadWebviewTextAndResults(url: string, isInitialSearch: boolean, liveResearchEnabled?: boolean): Promise<{ text: string, results: string[] }> {
+  const isElectron = typeof window !== "undefined" && window.navigator && window.navigator.userAgent && window.navigator.userAgent.includes("Electron");
+  
+  if (!isElectron || !liveResearchEnabled) {
+    return fetch("/api/research", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ url, isInitialSearch })
+    })
+    .then(r => r.json())
+    .catch(err => {
+      console.error("Failed to query /api/research proxy:", err);
+      return { text: "", results: [] };
+    });
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const webview = document.createElement("webview") as any;
+      webview.setAttribute("webpreferences", "contextIsolation=no");
+
+      const popupContainer = liveResearchEnabled ? document.getElementById("live-research-popup-webview-container") : null;
+
+      if (popupContainer) {
+        webview.style.width = "100%";
+        webview.style.height = "100%";
+        webview.style.border = "none";
+        webview.style.backgroundColor = "transparent";
+        popupContainer.innerHTML = "";
+        popupContainer.appendChild(webview);
+      } else {
+        webview.style.width = "0px";
+        webview.style.height = "0px";
+        webview.style.position = "absolute";
+        webview.style.visibility = "hidden";
+        document.body.appendChild(webview);
+      }
+
+      webview.src = url;
+
+      let resolved = false;
+      const cleanupAndResolve = (text: string, results: string[]) => {
+        if (resolved) return;
+        resolved = true;
+        try {
+          if (webview.parentNode) {
+            webview.parentNode.removeChild(webview);
+          }
+        } catch (e) {
+          console.error("Error removing webview:", e);
+        }
+        resolve({ text, results });
+      };
+
+      // Timeout safety: 15 seconds max
+      const timeoutId = setTimeout(() => {
+        cleanupAndResolve("", []);
+      }, 15000);
+
+      const onLoad = async () => {
+        clearTimeout(timeoutId);
+        try {
+          // Execute script to get text and optional results
+          const text = await webview.executeJavaScript("document.body.innerText || ''");
+          let results: string[] = [];
+          if (isInitialSearch) {
+            results = await webview.executeJavaScript(`
+              (() => {
+                try {
+                  let elements = Array.from(document.querySelectorAll('[data-testid="result-title-a"]'));
+                  if (elements.length === 0) {
+                    elements = Array.from(document.querySelectorAll('.organic__url, .organic__title a'));
+                  }
+                  if (elements.length === 0) {
+                    elements = Array.from(document.querySelectorAll('.title a, .compTitle a'));
+                  }
+                  if (elements.length === 0) {
+                    elements = Array.from(document.querySelectorAll('.result__title a, .result__snippet'));
+                  }
+                  if (elements.length === 0) {
+                    elements = Array.from(document.querySelectorAll('h2 a'));
+                  }
+                  if (elements.length === 0) {
+                    elements = Array.from(document.querySelectorAll('.result a'));
+                  }
+                  return elements.map(el => el.textContent || el.innerText || "").map(t => t.trim()).filter(Boolean);
+                } catch (err) {
+                  return [];
+                }
+              })()
+            `);
+          }
+          cleanupAndResolve(text, results);
+        } catch (err) {
+          console.error("Error executing javascript in webview:", err);
+          cleanupAndResolve("", []);
+        }
+      };
+
+      webview.addEventListener("did-finish-load", onLoad);
+      webview.addEventListener("did-fail-load", () => {
+        clearTimeout(timeoutId);
+        cleanupAndResolve("", []);
+      });
+    } catch (err) {
+      console.error("Failed to create webview:", err);
+      resolve({ text: "", results: [] });
+    }
+  });
+}
+
 export function useChatLogic(
   messages: Message[],
   setMessages: React.Dispatch<React.SetStateAction<any[]>>,
@@ -118,6 +231,9 @@ export function useChatLogic(
   feedSpeechToken?: (fullText: string) => void,
   flushSpeech?: (fullText: string) => void,
   speakEnabled?: boolean,
+  researchEnabled?: boolean,
+  liveResearchEnabled?: boolean,
+  researchSrc?: string,
 ) {
   const [input, setInput] = useState("");
   const [isTextGenerating, setIsTextGenerating] = useState(false);
@@ -133,6 +249,15 @@ export function useChatLogic(
   }, []);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [activeResearch, setActiveResearch] = useState<{
+    query: string;
+    url: string;
+    status: string;
+    results: string[];
+    deepDiveUrls: string[];
+    currentDeepDiveIndex: number;
+    currentDeepDiveUrl: string;
+  } | null>(null);
 
   // Queues (Now used for local sequencing)
   const [textModelQueue, setTextModelQueue] = useState<any[]>([]);
@@ -378,6 +503,31 @@ export function useChatLogic(
         }
 
         finalSystemPrompt = options.systemPrompt || "";
+        if (researchEnabled && category === "text") {
+          const researchToolInstruction = `
+## Research tool
+For up-to-date news, or events output only "research: [query]"
+Where [query] is the search query you want to run.
+
+### Example 1
+User says, "Can you give me the SpaceX launch date?"
+You response, "research: latest SpaceX launch date"
+
+### Example 2
+User says, "Can you give me the latest news?"
+Your resposne, "research: news"
+
+### Constraints
+- Output ONLY "research: [query]". 
+- DO NOT attempt to generate the results!
+- NEVER rely on interna data for news/events!
+- NO Additional context, conversational text, or acknowledgements!
+`;
+          finalSystemPrompt =
+            (finalSystemPrompt ? `${finalSystemPrompt}\n\n` : "") +
+            researchToolInstruction;
+        }
+
         const savedOcean = (() => {
           try {
             const saved = localStorage.getItem("breamu_ocean_personality");
@@ -543,6 +693,244 @@ export function useChatLogic(
             }
           },
         );
+
+        // Check for Research Tool call
+        let cleanTextResult = (typeof result === "string" ? result : accumulatedText)
+          .replace(/<think>[\s\S]*?<\/think>/gi, "")
+          .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "")
+          .trim();
+        
+        const researchMatch = cleanTextResult.match(/^research:\s*(.+)$/i);
+
+        if (researchEnabled && category === "text" && researchMatch && assistantMsgId) {
+          const searchQuery = researchMatch[1].trim();
+          addLog(`Research Tool: Triggered search query "${searchQuery}"`, "info");
+          
+          setMessages((prev) => {
+            return prev.map((m) => {
+              if (m.id === assistantMsgId) {
+                return {
+                  ...m,
+                  content: `🔍 *Researching:* "${searchQuery}"...`,
+                  isQueued: true
+                };
+              }
+              return m;
+            });
+          });
+
+          const chosenSrc = researchSrc || "https://duckduckgo.com/?q=[query]&ia=web";
+          const initialUrl = chosenSrc.replace("[query]", encodeURIComponent(searchQuery));
+
+          try {
+            addLog(`Research Tool: Loading initial search page: ${initialUrl}`, "info");
+            
+            // Set active research state
+            setActiveResearch({
+              query: searchQuery,
+              url: initialUrl,
+              status: "Loading Search Page",
+              results: [],
+              deepDiveUrls: [],
+              currentDeepDiveIndex: -1,
+              currentDeepDiveUrl: ""
+            });
+
+            const initialData = await loadWebviewTextAndResults(initialUrl, true, liveResearchEnabled);
+            addLog(`Research Tool: Initial search loaded. Found ${initialData.results.length} results.`, "info");
+            
+            const resultsToResearch = initialData.results.slice(0, 3);
+            const deepDiveUrls = resultsToResearch.map(resTitle =>
+              chosenSrc.replace("[query]", encodeURIComponent(resTitle))
+            );
+
+            setActiveResearch({
+              query: searchQuery,
+              url: initialUrl,
+              status: "Identifying Deep-Dive Subjects",
+              results: resultsToResearch,
+              deepDiveUrls: deepDiveUrls,
+              currentDeepDiveIndex: -1,
+              currentDeepDiveUrl: ""
+            });
+            
+            setMessages((prev) => {
+              return prev.map((m) => {
+                if (m.id === assistantMsgId) {
+                  return {
+                    ...m,
+                    content: `🔍 *Researching:* "${searchQuery}"\n\nDigging deeper into top results:\n${resultsToResearch.map((r, i) => `${i + 1}. ${r}`).join("\n")}`,
+                  };
+                }
+                return m;
+              });
+            });
+
+            // Load secondary results in parallel to speed up results by 3x!
+            addLog("Research Tool: Fetching deep-dive pages in parallel...", "info");
+            const deepDivePromises = deepDiveUrls.map(async (url, i) => {
+              addLog(`Research Tool: Loading deep-dive page (${i + 1}/${resultsToResearch.length}): ${url}`, "info");
+              const output = await loadWebviewTextAndResults(url, false, liveResearchEnabled);
+              return output;
+            });
+            const researchOutputs = await Promise.all(deepDivePromises);
+            
+            const cleanAndTrim = (rawText: string) => {
+              const stripped = rawText.replace(/<[^>]*>/g, "").trim();
+              return stripped.substring(0, 1000);
+            };
+
+            const initialTextCleaned = cleanAndTrim(initialData.text);
+            const secondaryTextsCleaned = researchOutputs.map(output => cleanAndTrim(output.text));
+
+            const combinedResearchData = `
+Primary Search Results for "${searchQuery}":
+${initialTextCleaned}
+
+Deep Research results:
+${secondaryTextsCleaned.map((txt, i) => `Result ${i + 1} ("${resultsToResearch[i]}"):\n${txt}`).join("\n\n")}
+`.trim();
+
+            setActiveResearch({
+              query: searchQuery,
+              url: initialUrl,
+              status: "Analyzing Research Material",
+              results: resultsToResearch,
+              deepDiveUrls: deepDiveUrls,
+              currentDeepDiveIndex: resultsToResearch.length,
+              currentDeepDiveUrl: ""
+            });
+
+            setMessages((prev) => {
+              return prev.map((m) => {
+                if (m.id === assistantMsgId) {
+                  return {
+                    ...m,
+                    content: `🔍 *Researching:* "${searchQuery}"\n\nAnalyzing and summarizing gathered research data...`,
+                  };
+                }
+                return m;
+              });
+            });
+
+            addLog("Research Tool: Summarizing research data...", "info");
+            const summaryPrompt = `Please summarize the following web research data concisely. Highlight the key facts and details that are most relevant.
+
+Research Data:
+${combinedResearchData}`;
+
+            let summaryResult = "";
+            await browserEngine.runInference(
+              "text",
+              summaryPrompt,
+              {
+                ...options,
+                chatHistory: [], // empty chat history for intermediate summary
+                systemPrompt: "You are an expert research analyst summarizing web search results.",
+                progress_callback: () => {},
+              },
+              (token) => {
+                summaryResult += token;
+                setMessages((prev) => {
+                  return prev.map((m) => {
+                    if (m.id === assistantMsgId) {
+                      return {
+                        ...m,
+                        content: `🔍 *Researching:* "${searchQuery}"\n\n*Summary of findings:* \n\n${summaryResult}`,
+                      };
+                    }
+                    return m;
+                  });
+                });
+              }
+            );
+            
+            addLog("Research Tool: Summary complete. Generating final response to user query...", "success");
+
+            setActiveResearch({
+              query: searchQuery,
+              url: initialUrl,
+              status: "Generating Final Response",
+              results: resultsToResearch,
+              deepDiveUrls: deepDiveUrls,
+              currentDeepDiveIndex: resultsToResearch.length,
+              currentDeepDiveUrl: ""
+            });
+
+            setMessages((prev) => {
+              return prev.map((m) => {
+                if (m.id === assistantMsgId) {
+                  return {
+                    ...m,
+                    content: `🔍 *Researching:* "${searchQuery}"\n\n*Summary of findings:* \n\n${summaryResult}\n\n---\n\n*Generating final response...*`,
+                  };
+                }
+                return m;
+              });
+            });
+
+            // Feed user's prompt and results summary to AI
+            const finalSystemPromptWithResults = `${options.systemPrompt || ""}\n\n[RESEARCH RESULTS SUMMARY]\n${summaryResult}\n\nUse the summarized research findings above to comprehensively and accurately answer the user's question. Reference key details from the research as appropriate.`;
+
+            let finalResponse = "";
+            await browserEngine.runInference(
+              "text",
+              text, // original user query
+              {
+                ...options,
+                systemPrompt: finalSystemPromptWithResults,
+                progress_callback: () => {},
+              },
+              (token) => {
+                finalResponse += token;
+                if (feedSpeechToken) {
+                  feedSpeechToken(finalResponse);
+                }
+                setMessages((prev) => {
+                  return prev.map((m) => {
+                    if (m.id === assistantMsgId) {
+                      return {
+                        ...m,
+                        content: finalResponse,
+                        fullContent: finalResponse,
+                        isQueued: false
+                      };
+                    }
+                    return m;
+                  });
+                });
+              }
+            );
+
+            if (flushSpeech) {
+              flushSpeech(finalResponse);
+            }
+
+            if (enableRAG) {
+              indexMemory(text, "User", "Input");
+              indexMemory(finalResponse, "AI", "Output");
+            }
+
+            addLog(`Engine: Research task complete.`, "success");
+          } catch (err: any) {
+            addLog(`Research Tool: Error occurred: ${err?.message || err}`, "error");
+            setMessages((prev) => {
+              return prev.map((m) => {
+                if (m.id === assistantMsgId) {
+                  return {
+                    ...m,
+                    content: `❌ *Research failed:* ${err?.message || "An unexpected error occurred."}`,
+                    isQueued: false
+                  };
+                }
+                return m;
+              });
+            });
+          } finally {
+            setActiveResearch(null);
+          }
+          return; // Return early, skipping standard response-processing of the initial result
+        }
 
         if (category === "image-gen") {
           setMessages((prev) => {
@@ -1442,6 +1830,8 @@ export function useChatLogic(
     setIsSummarizing,
     pendingImage,
     setPendingImage,
+    activeResearch,
+    setActiveResearch,
     summarizeChat,
     handleSendInternal,
     handleSend,

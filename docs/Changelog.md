@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.8.2] - 2026-07-06
+
+### Added
+- **Experimental Deep Research Tool**: Implemented a new multi-step `research` tool for the local text inference engine. When enabled via the new sidebar settings toggle, the text model can search the web by responding with `research: [query]`. The engine dynamically creates sandboxed Electron `<webview>` elements to crawl DuckDuckGo, extracts search results, digs deeper into the top three findings, strips all HTML content, trims snippets to 1000 characters, generates a smart AI summary of the research data, and feeds this rich context back into the model to produce a comprehensive, factual final answer.
+- **Live Deep Research Viewer Overlay**: Designed and integrated a gorgeous, high-tech floating overlay panel (`LiveResearchPopup.tsx`) that visualizes the AI's Web Deep Research as it occurs in real-time. Features active pulsing scan indicators, real-time query display, sequential deep-dive progress checkmarks, and an embedded live Electron `<webview>` viewport allowing users to watch the browser load pages, navigate, and scrape content.
+- **Multiple Search Engines Support**: Added custom configuration options for the research source (`researchSrc`), allowing users to toggle their preferred engine between DuckDuckGo, Yandex, and Yahoo Search directly from the sidebar.
+- **New Highly Optimized Models**: Integrated high-performance ONNX models:
+  - **LemOneLabs/Qwen3-4B-ONNX** (Qwen 3 4B)
+  - **LemOneLabs/Bonsai-8B-ONNX** (Bonsai 8B)
+  - **LemOneLabs/whisper-large-v3-turbo** (Whisper Large V3 STT)
+- **Persistent Text Model Customization**: Set the default text model to the ultra-efficient **LFM2** (`LFM2-1.2B-ONNX`) and added native `localStorage` state retention to securely store and load the user's selected models across page reloads and sessions.
+- **Improved Active Memory Bank Selector**: Overhauled the factual/semantic vector memory bank switcher, completely replacing the portal-based dropdown component with a custom hybrid interface. It features a rock-solid native HTML `<select>` selector to bypass iframe dropdown clipping, a direct text input to create or target any arbitrary custom memory scope, and quick-access action badges for active scopes.
+
+### Fixed
+- **Model Swapping Crash Prevention**: Resolved memory leaks, heap fatigue, and crashes occurring during frequent model swaps by proactively disposing (terminating) the old Web Worker and instantiating a fresh one prior to loading a new model.
+- **Voxtral Engine Integration**: Fixed a background web worker failure with the newly added Voxtral models by dynamically mapping and auto-injecting the specialized `VoxtralForConditionalGeneration` and `VoxtralProcessor` classes during execution.
+
 ## [0.8.1] - 2026-07-04
 
 ### Added
