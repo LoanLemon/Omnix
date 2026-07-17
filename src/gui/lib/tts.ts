@@ -15,38 +15,61 @@ class KokoroEngine {
     private loading: boolean = false;
     private initialized: boolean = false;
     private playSessionId: number = 0;
+    private initPromise: Promise<void> | null = null;
 
     /**
      * Initializes the Kokoro model.
      * Uses WebGPU if available, otherwise falls back to WASM.
      */
-    async init() {
-        if (this.initialized || this.loading) return;
-        this.loading = true;
-        this.playSessionId++; // Invalidate any pending actions
+    async init(): Promise<void> {
+        if (this.initialized) return;
+        if (this.initPromise) return this.initPromise;
 
-        try {
-            const device = 'gpu' in navigator ? 'webgpu' : 'wasm';
-            
-            // Using fp32 for better quality. 
-            // Note: Use smaller text chunks to mitigate VRAM spikes on mobile.
-            this.tts = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-ONNX", {
-                dtype: "fp32", 
-                device, 
-            });
-            this.initialized = true;
-            console.log("Kokoro TTS Engine initialized");
-            
-            // Pre-create AudioContext to handle user gesture
-            if (!this.audioContext) {
-                this.audioContext = new AudioContext({ sampleRate: 24000 });
+        this.initPromise = (async () => {
+            this.loading = true;
+            this.playSessionId++; // Invalidate any pending actions
+
+            try {
+                let device: 'webgpu' | 'wasm' | 'cpu' = 'gpu' in navigator ? 'webgpu' : 'wasm';
+                
+                try {
+                    // Using fp32 for better quality. 
+                    // Note: Use smaller text chunks to mitigate VRAM spikes on mobile.
+                    this.tts = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-ONNX", {
+                        dtype: "fp32", 
+                        device, 
+                    });
+                } catch (webGpuError: any) {
+                    if (device === 'webgpu') {
+                        console.warn("⚠️ Kokoro WebGPU initialization failed, falling back to WASM CPU engine:", webGpuError);
+                        device = 'wasm';
+                        this.tts = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-ONNX", {
+                            dtype: "fp32", 
+                            device, 
+                        });
+                    } else {
+                        throw webGpuError;
+                    }
+                }
+
+                this.initialized = true;
+                console.log("Kokoro TTS Engine initialized (" + device + ")");
+                
+                // Pre-create AudioContext to handle user gesture
+                if (!this.audioContext) {
+                    this.audioContext = new AudioContext({ sampleRate: 24000 });
+                }
+            } catch (error) {
+                console.error("Kokoro initialization failed:", error);
+                this.initialized = false;
+                throw error;
+            } finally {
+                this.loading = false;
+                this.initPromise = null;
             }
-        } catch (error) {
-            console.error("Kokoro initialization failed:", error);
-            this.initialized = false;
-        } finally {
-            this.loading = false;
-        }
+        })();
+
+        return this.initPromise;
     }
 
     /**
@@ -66,6 +89,13 @@ class KokoroEngine {
      */
     async unload() {
         this.stop();
+        if (this.initPromise) {
+            try {
+                await this.initPromise;
+            } catch (e) {
+                // Ignore initialization errors during unload
+            }
+        }
         if (this.tts) {
             // Transformers.js models often have a dispose method if they are using WebGPU/WASM backends
             if (typeof this.tts.dispose === 'function') {
@@ -84,8 +114,10 @@ class KokoroEngine {
     async generate(text: string, voice: string = "af_heart"): Promise<AudioBuffer> {
         if (!this.initialized) await this.init();
 
-        // Clean text for natural speech (remove markdown, handle pauses)
+        // Clean text for natural speech (ignore text wrapped in {} or {{}}, remove markdown, handle pauses)
         const cleanText = text
+            .replace(/\{\{[\s\S]*?\}\}/g, '')
+            .replace(/\{[\s\S]*?\}/g, '')
             .replace(/[*_`#~]/g, '') // Remove markdown symbols
             .replace(/\[.*?\]\(.*?\)/g, '') // Remove links
             .replace(/[()]/g, ' ') // Replace parentheses with space for natural pause
@@ -144,6 +176,8 @@ class KokoroEngine {
         if (!this.initialized) await this.init();
 
         const cleanText = text
+            .replace(/\{\{[\s\S]*?\}\}/g, '')
+            .replace(/\{[\s\S]*?\}/g, '')
             .replace(/[*_`#~]/g, '')
             .replace(/\[.*?\]\(.*?\)/g, '')
             .replace(/[()]/g, ' ')
@@ -193,7 +227,7 @@ class KokoroEngine {
     /**
      * Plays the generated audio.
      */
-    async speak(input: string | AudioBuffer, voice: string = "af_heart", onStart?: () => void) {
+    async speak(input: string | AudioBuffer, voice: string = "af_heart", onStart?: () => void, volume?: number, speed?: number, pitch?: number) {
         const sessionId = ++this.playSessionId;
         
         if (!this.initialized) await this.init();
@@ -215,7 +249,27 @@ class KokoroEngine {
 
             this.currentSource = this.audioContext.createBufferSource();
             this.currentSource.buffer = buffer;
-            this.currentSource.connect(this.audioContext.destination);
+
+            if (speed !== undefined) {
+                this.currentSource.playbackRate.value = speed;
+            }
+
+            if (pitch !== undefined && this.currentSource.detune) {
+                try {
+                    this.currentSource.detune.value = 1200 * Math.log2(pitch);
+                } catch (e) {
+                    console.warn("detune not supported or failed:", e);
+                }
+            }
+
+            if (volume !== undefined) {
+                const gainNode = this.audioContext.createGain();
+                gainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
+                this.currentSource.connect(gainNode);
+                gainNode.connect(this.audioContext.destination);
+            } else {
+                this.currentSource.connect(this.audioContext.destination);
+            }
             
             return new Promise<void>((resolve) => {
                 if (!this.currentSource || sessionId !== this.playSessionId) return resolve();

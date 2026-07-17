@@ -26,6 +26,7 @@ export function useModelManagement(
           "music-gen": parsed["music-gen"] || "musicgen-small",
           director: parsed.director || "use-text-model",
           coder: parsed.coder || "qwen-2.5-coder-3b-q4",
+          live: parsed.live || "cascade-pipeline",
         };
       } catch (e) {
         // Fallback below
@@ -40,6 +41,7 @@ export function useModelManagement(
       "music-gen": "musicgen-small",
       director: "use-text-model",
       coder: "qwen-2.5-coder-3b-q4",
+      live: "cascade-pipeline",
     };
   });
 
@@ -84,6 +86,17 @@ export function useModelManagement(
     if (category === "livews") {
       actualCategory = "text";
       id = modelId || selectedModels.text;
+    }
+
+    if (category === "live") {
+      if (id === "cascade-pipeline") {
+        setActiveCategory("live");
+        setIsModelReady(true);
+        setIsModelLoading(false);
+        setLoadedModelId("cascade-pipeline");
+        return;
+      }
+      actualCategory = "text";
     }
 
     let modelInfo = filteredModelsList.find((m) => m.id === id);
@@ -174,7 +187,7 @@ export function useModelManagement(
       const next = { ...prev };
       const currentQtypes = selectedQtypesRef.current;
 
-      ["text", "vision", "stt", "tts", "image-gen", "music-gen", "director", "coder"].forEach(cat => {
+      ["text", "vision", "stt", "tts", "image-gen", "music-gen", "director", "coder", "live"].forEach(cat => {
         const currentId = prev[cat];
         const currentModel = filteredModelsList.find(m => m.id === currentId);
         if (currentModel && getRequiredRamForModel(currentModel, currentQtypes[currentId]) <= systemRam) {

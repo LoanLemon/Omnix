@@ -64,12 +64,38 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     setResearchSrc,
     enableMMRS,
     setEnableMMRS,
+    enableDualBrain,
+    setEnableDualBrain,
+    dualBrainMode,
+    setDualBrainMode,
+    enableTurboMode,
+    setEnableTurboMode,
     mmrsModel,
     setMmrsModel,
     mmrsMode,
     setMmrsMode,
     inactivityTimeout,
     setInactivityTimeout,
+    onlyExecute,
+    setOnlyExecute,
+    developerView,
+    setDeveloperView,
+    aceBpm,
+    setAceBpm,
+    aceKey,
+    setAceKey,
+    aceRegisterShift,
+    setAceRegisterShift,
+    aceVibratoSwell,
+    setAceVibratoSwell,
+    aceReverbDelayFeed,
+    setAceReverbDelayFeed,
+    aceVocalStyle,
+    setAceVocalStyle,
+    aceKokoroVoice,
+    setAceKokoroVoice,
+    aceAutoSettings,
+    setAceAutoSettings,
   } = useSettings();
 
   // --- State ---
@@ -82,7 +108,6 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const [messages, setMessages] = useState<any[]>([]);
-  const [error, setError] = useState<ErrorReport | null>(null);
   const [didError, setDidError] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -537,6 +562,20 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     hasWebGPU
   } = useSystemStats(addLog);
 
+  const [error, setErrorState] = useState<ErrorReport | null>(null);
+
+  const setError = useCallback((err: ErrorReport | null) => {
+    if (err) {
+      setErrorState({
+        ...err,
+        memoryAtError: err.memoryAtError || (memoryUsage ? `${Math.round(memoryUsage.used / 1024 / 1024)} MB / ${Math.round(memoryUsage.total / 1024 / 1024 / 1024)} GB` : undefined),
+        stackHeapAtError: err.stackHeapAtError || (heapUsage ? `${heapUsage.used} MB / ${heapUsage.limit} MB` : undefined),
+      });
+    } else {
+      setErrorState(null);
+    }
+  }, [memoryUsage, heapUsage]);
+
   const [isRemoteProcessing, setIsRemoteProcessing] = useState(false);
 
   useEffect(() => {
@@ -694,7 +733,8 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     enableRelayMode || isElectron,
     setIsRemoteProcessing,
     loadModel,
-    selectedModels
+    selectedModels,
+    speakEnabled
   );
 
   const { processSpeechQueue, feedSpeechToken, flushSpeech } = useSpeechManagement(
@@ -783,7 +823,27 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     speakEnabled,
     researchEnabled,
     liveResearchEnabled,
-    researchSrc
+    researchSrc,
+    aceBpm,
+    aceKey,
+    aceRegisterShift,
+    aceVibratoSwell,
+    aceReverbDelayFeed,
+    aceVocalStyle,
+    aceKokoroVoice,
+    aceAutoSettings,
+    (params: any) => {
+      if (params.bpm !== undefined) setAceBpm(params.bpm);
+      if (params.key !== undefined) setAceKey(params.key);
+      if (params.vocalStyle !== undefined) setAceVocalStyle(params.vocalStyle);
+      if (params.kokoroVoice !== undefined) setAceKokoroVoice(params.kokoroVoice);
+      if (params.registerShift !== undefined) setAceRegisterShift(params.registerShift);
+      if (params.vibratoSwell !== undefined) setAceVibratoSwell(params.vibratoSwell);
+      if (params.reverbDelayFeed !== undefined) setAceReverbDelayFeed(params.reverbDelayFeed);
+    },
+    enableDualBrain,
+    dualBrainMode,
+    onlyExecute
   );
 
   // Reset error when mode changes explicitly
@@ -796,6 +856,26 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     browserEngine.setEnableMMRS(enableMMRS);
   }, [enableMMRS]);
+
+  // Sync Dual Brain states with model engine
+  useEffect(() => {
+    if (browserEngine && typeof (browserEngine as any).setEnableDualBrain === "function") {
+      (browserEngine as any).setEnableDualBrain(enableDualBrain);
+    }
+  }, [enableDualBrain]);
+
+  useEffect(() => {
+    if (browserEngine && typeof (browserEngine as any).setDualBrainMode === "function") {
+      (browserEngine as any).setDualBrainMode(dualBrainMode);
+    }
+  }, [dualBrainMode]);
+
+  // Sync Turbo state with model engine
+  useEffect(() => {
+    if (browserEngine && typeof (browserEngine as any).setEnableTurboMode === "function") {
+      (browserEngine as any).setEnableTurboMode(enableTurboMode);
+    }
+  }, [enableTurboMode]);
 
   // --- Mode Sync: Auto-load or switch model based on active chat/coder mode ---
   useEffect(() => {
@@ -996,6 +1076,14 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     liveModeTimer, setLiveModeTimer,
     theme, setTheme,
     minimizeToTray, setMinimizeToTray,
+    aceBpm, setAceBpm,
+    aceKey, setAceKey,
+    aceRegisterShift, setAceRegisterShift,
+    aceVibratoSwell, setAceVibratoSwell,
+    aceReverbDelayFeed, setAceReverbDelayFeed,
+    aceVocalStyle, setAceVocalStyle,
+    aceKokoroVoice, setAceKokoroVoice,
+    aceAutoSettings, setAceAutoSettings,
     enableRelayMode, setEnableRelayMode,
     allowRemote, setAllowRemote,
     enableFocusTopics, setEnableFocusTopics,
@@ -1007,9 +1095,14 @@ export function AppLogicProvider({ children }: { children: ReactNode }) {
     researchSrc, setResearchSrc,
     activeResearch, setActiveResearch,
     enableMMRS, setEnableMMRS,
+    enableDualBrain, setEnableDualBrain,
+    dualBrainMode, setDualBrainMode,
+    enableTurboMode, setEnableTurboMode,
     mmrsModel, setMmrsModel,
     mmrsMode, setMmrsMode,
     inactivityTimeout, setInactivityTimeout,
+    onlyExecute, setOnlyExecute,
+    developerView, setDeveloperView,
     chatTabs, activeTabId, selectTab, openNewTab, closeTab, renameTab,
     relayActive, isApiServerActive, startRelayServer, launchApiServer, shutdownApiServer,
     isModelLoading, isModelReady, loadingProgress, loadedModelId,

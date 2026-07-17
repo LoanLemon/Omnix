@@ -1,18 +1,30 @@
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, session, desktopCapturer } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { fork } from 'child_process';
 import fs from 'fs/promises';
 import os from 'os';
 
+// Dynamically detect user's physical RAM and optimize limits
+const totalMemBytes = os.totalmem();
+const totalMemMB = Math.floor(totalMemBytes / (1024 * 1024));
+// Set max-old-space-size to 85% of total memory to prevent OS crashing, leaving a comfortable buffer.
+const maxOldSpaceMB = Math.max(4096, Math.floor(totalMemMB * 0.85));
+// Set max-wasm-memory accordingly
+const maxWasmMB = Math.max(16384, Math.floor(maxOldSpaceMB * 0.75));
+
 // Configure Chromium switches for forcing High Performance discrete GPU and advanced WebGPU features
 app.commandLine.appendSwitch('force-high-performance-gpu');
 app.commandLine.appendSwitch('force_high_performance_gpu');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-unsafe-webgpu');
+app.commandLine.appendSwitch('disable-blink-features', 'BackgroundHtmlParserKeyScenario');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('enable-dawn-features', 'allow_unsafe_apis');
 app.commandLine.appendSwitch('enable-features', 'WebGPUService,WebAssemblySimd,WebAssemblyThreads');
-app.commandLine.appendSwitch('js-flags', '--max-wasm-memory=16384');
+app.commandLine.appendSwitch('js-flags', `--max-wasm-memory=${maxWasmMB} --max-old-space-size=${maxOldSpaceMB}`);
 app.commandLine.appendSwitch('enable-webgpu-developer-features');
 
 // Handling ESM directory names
@@ -79,14 +91,14 @@ function startBackgroundServer() {
             name: 'Electron Node (Compiled CJS)',
             serverPath: serverCjsPath,
             execPath: process.execPath,
-            execArgv: [],
+            execArgv: [`--max-old-space-size=${maxOldSpaceMB}`],
             env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
           },
           {
             name: 'System Node (Compiled CJS)',
             serverPath: serverCjsPath,
             execPath: 'node',
-            execArgv: [],
+            execArgv: [`--max-old-space-size=${maxOldSpaceMB}`],
             env: { ...process.env }
           }
         );
@@ -98,21 +110,21 @@ function startBackgroundServer() {
             name: 'System Node with tsx Loader (TS source)',
             serverPath: serverTsPath,
             execPath: 'node',
-            execArgv: [tsxCliPath],
+            execArgv: [tsxCliPath, `--max-old-space-size=${maxOldSpaceMB}`],
             env: { ...process.env }
           },
           {
             name: 'System Node with --import (TS source)',
             serverPath: serverTsPath,
             execPath: 'node',
-            execArgv: ['--import', 'tsx'],
+            execArgv: ['--import', 'tsx', `--max-old-space-size=${maxOldSpaceMB}`],
             env: { ...process.env }
           },
           {
             name: 'Electron Node with tsx CLI (TS source)',
             serverPath: serverTsPath,
             execPath: process.execPath,
-            execArgv: [tsxCliPath],
+            execArgv: [tsxCliPath, `--max-old-space-size=${maxOldSpaceMB}`],
             env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
           }
         );
@@ -406,6 +418,43 @@ function registerIpcHandlers() {
 }
 
 app.whenReady().then(() => {
+  // Permission Auto-Approval for media access, geolocation, notifications, and screen-sharing ('display-capture')
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedPermissions = ['media', 'geolocation', 'notifications', 'midiSysex', 'openExternal', 'display-capture'];
+    if (allowedPermissions.includes(permission)) {
+      callback(true); // Automatically approve critical permissions
+    } else {
+      callback(false);
+    }
+  });
+
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    const allowedPermissions = ['media', 'geolocation', 'notifications', 'midiSysex', 'openExternal', 'display-capture'];
+    return allowedPermissions.includes(permission);
+  });
+
+  // Source Selection Automation to auto-select standard display sources without prompting the user
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+      // Prioritize the entire desktop or primary screen targets automatically
+      const primarySource = sources.find(
+        s => s.id.startsWith('screen:') || 
+             s.name.toLowerCase().includes('screen') || 
+             s.name.toLowerCase().includes('entire') ||
+             s.name.toLowerCase().includes('desktop')
+      ) || sources[0];
+
+      if (primarySource) {
+        callback({ video: primarySource });
+      } else {
+        callback(null);
+      }
+    }).catch((err) => {
+      console.error('Omnix: Error in setDisplayMediaRequestHandler desktopCapturer.getSources:', err);
+      callback(null);
+    });
+  });
+
   registerIpcHandlers();
   
   if (isWorkerMode) {

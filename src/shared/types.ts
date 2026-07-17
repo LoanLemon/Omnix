@@ -14,6 +14,11 @@ export interface ErrorReport {
   activeModel?: string;
   contextLength?: number;
   rawPrompt?: string;
+  memoryAtError?: string;
+  stackHeapAtError?: string;
+  systemPromptLength?: number;
+  promptLength?: number;
+  totalContextLength?: number;
 }
 
 export interface SandboxFile {
@@ -34,9 +39,13 @@ export interface Message {
   audio?: string;
   hidden?: boolean;
   timestamp?: string;
-  stats?: { tps: string; tokens: number };
+  stats?: { tps?: string; tokens?: number; duration?: number; startTime?: number; finished?: boolean };
   isProgress?: boolean;
   isQueued?: boolean;
+  isScript?: boolean;
+  scriptOutput?: string;
+  scriptOutputItems?: { val: string; pending: boolean }[];
+  promptFormat?: "General Text" | "JSON" | "HTML" | "Image" | "Code";
   loadingProgress?: Record<string, { progress: number; status: string }>;
   options?: string[];
   toolCall?: {

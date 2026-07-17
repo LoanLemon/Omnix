@@ -41,6 +41,8 @@ export class BrowserModelEngine {
   private workers: Map<string, Worker | null> = new Map();
   private workerQueues: Map<string, Promise<void>> = new Map();
   private enableMMRS: boolean = false;
+  private enableDualBrain: boolean = false;
+  private dualBrainMode: "enhanced-speed" | "double-check" = "enhanced-speed";
   private pendingRequests: Map<string, {
     resolve: (val: any) => void;
     reject: (err: any) => void;
@@ -52,6 +54,8 @@ export class BrowserModelEngine {
 
   // Keep track of lightweight load states locally for synchronous UI stats queries
   public useLocalServerApi = false;
+  public isDedicatedSttWorkerEnabled = false;
+  public enableTurboMode = false;
   private currentModelId: string | null = null;
   private currentOpModelId: string | null = null;
   private hasDirector: boolean = false;
@@ -66,15 +70,72 @@ export class BrowserModelEngine {
   private listeners: Set<() => void> = new Set();
   private onIdleUnloadCallback: (() => void) | null = null;
 
+  // Dedicated STT & TTS sidecar idle timers (10 minutes)
+  private sttIdleTimeoutId: any = null;
+  private ttsIdleTimeoutId: any = null;
+  private readonly sidecarIdleTimeoutMs: number = 10 * 60 * 1000; // 10 minutes
+
   constructor() {
     if (typeof window !== "undefined") {
       const savedTimeout = localStorage.getItem("omnix_inactivity_timeout");
       if (savedTimeout) {
         this.idleLimitMinutes = parseInt(savedTimeout, 10);
       }
+      const savedTurbo = localStorage.getItem("omnix_enable_turbo");
+      if (savedTurbo === "true") {
+        this.enableTurboMode = true;
+        this.useLocalServerApi = true;
+      }
     }
     this.initWorker("main");
     this.restartIdleTimer();
+  }
+
+  private restartSttIdleTimer() {
+    if (this.sttIdleTimeoutId) {
+      clearTimeout(this.sttIdleTimeoutId);
+      this.sttIdleTimeoutId = null;
+    }
+    if (this.hasStt) {
+      console.log(`⏱️ Starting 10-minute STT sidecar idle timer...`);
+      this.sttIdleTimeoutId = setTimeout(async () => {
+        console.log(`💤 STT sidecar idle for 10 minutes. Unloading STT model/worker to free up memory...`);
+        try {
+          await this.unloadWorker("stt");
+        } catch (e) {
+          console.error("Failed to unload STT worker during idle cleanup:", e);
+        }
+      }, this.sidecarIdleTimeoutMs);
+    }
+  }
+
+  private restartTtsIdleTimer() {
+    if (this.ttsIdleTimeoutId) {
+      clearTimeout(this.ttsIdleTimeoutId);
+      this.ttsIdleTimeoutId = null;
+    }
+    if (this.hasTts) {
+      console.log(`⏱️ Starting 10-minute TTS sidecar idle timer...`);
+      this.ttsIdleTimeoutId = setTimeout(async () => {
+        console.log(`💤 TTS sidecar idle for 10 minutes. Unloading TTS engine to free up memory...`);
+        try {
+          await this.unloadTts();
+        } catch (e) {
+          console.error("Failed to unload TTS during idle cleanup:", e);
+        }
+      }, this.sidecarIdleTimeoutMs);
+    }
+  }
+
+  async unloadTts() {
+    this.hasTts = false;
+    if (this.ttsIdleTimeoutId) {
+      clearTimeout(this.ttsIdleTimeoutId);
+      this.ttsIdleTimeoutId = null;
+    }
+    await tts.unload().catch(e => console.error("Error unloading Kokoro TTS:", e));
+    this.notify();
+    return { success: true };
   }
 
   getCurrentModelId(): string | null {
@@ -147,7 +208,42 @@ export class BrowserModelEngine {
     this.notify();
   }
 
+  setEnableDualBrain(val: boolean) {
+    if (this.enableDualBrain === val) return;
+    this.enableDualBrain = val;
+    this.terminateAllWorkers();
+
+    if (val) {
+      this.initWorker("brain1");
+      this.initWorker("brain2");
+    } else {
+      if (this.enableMMRS) {
+        this.initWorker("text");
+        this.initWorker("op");
+      } else {
+        this.initWorker("main");
+      }
+    }
+    this.restartIdleTimer();
+    this.notify();
+  }
+
+  setDualBrainMode(mode: "enhanced-speed" | "double-check") {
+    if (this.dualBrainMode === mode) return;
+    this.dualBrainMode = mode;
+    this.notify();
+  }
+
   terminateAllWorkers() {
+    if (this.sttIdleTimeoutId) {
+      clearTimeout(this.sttIdleTimeoutId);
+      this.sttIdleTimeoutId = null;
+    }
+    if (this.ttsIdleTimeoutId) {
+      clearTimeout(this.ttsIdleTimeoutId);
+      this.ttsIdleTimeoutId = null;
+    }
+
     for (const [key, w] of Array.from(this.workers.entries())) {
       if (w) w.terminate();
     }
@@ -161,6 +257,9 @@ export class BrowserModelEngine {
     this.hasTts = false;
     this.hasEmbedding = false;
     
+    // Also unload the main thread Kokoro TTS engine to free memory
+    tts.unload().catch(e => console.error("Error unloading Kokoro during worker termination:", e));
+    
     for (const [id, req] of Array.from(this.pendingRequests.entries())) {
       req.reject(new Error("Engine workers reset due to configuration change."));
       this.pendingRequests.delete(id);
@@ -168,6 +267,12 @@ export class BrowserModelEngine {
   }
 
   private getWorkerKeyForCategory(category: string): string {
+    if (category === "stt") {
+      return "stt";
+    }
+    if (this.enableDualBrain) {
+      return category === "text" ? "brain1" : "brain2";
+    }
     if (!this.enableMMRS) {
       return "main";
     }
@@ -202,6 +307,26 @@ export class BrowserModelEngine {
       worker.addEventListener("message", (e) => {
         const { type, requestId, result, error, progress, token } = e.data;
         
+        if (type === "tts_request") {
+          const { text, voiceID } = e.data;
+          this.runInference("tts", text, { voiceID })
+            .then((ttsRes) => {
+              worker.postMessage({
+                type: "tts_response",
+                requestId,
+                payload: ttsRes
+              });
+            })
+            .catch((err) => {
+              worker.postMessage({
+                type: "tts_response",
+                requestId,
+                payload: { error: err?.message || String(err) }
+              });
+            });
+          return;
+        }
+
         if (type === "error" && requestId === "global") {
           if (error && typeof error === "string" && (
             error.includes("A valid external Instance reference no longer exists") || 
@@ -353,6 +478,12 @@ export class BrowserModelEngine {
     }
 
     this.stopIdleTimer();
+    if (workerKey === "stt") {
+      if (this.sttIdleTimeoutId) {
+        clearTimeout(this.sttIdleTimeoutId);
+        this.sttIdleTimeoutId = null;
+      }
+    }
 
     const requestId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : (Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15));
     return new Promise((resolve, reject) => {
@@ -361,11 +492,17 @@ export class BrowserModelEngine {
           resolve(val);
           taskResolve();
           this.restartIdleTimer();
+          if (workerKey === "stt") {
+            this.restartSttIdleTimer();
+          }
         },
         reject: (err: any) => {
           reject(err);
           taskResolve();
           this.restartIdleTimer();
+          if (workerKey === "stt") {
+            this.restartSttIdleTimer();
+          }
         },
         progress_callback,
         onToken,
@@ -380,10 +517,27 @@ export class BrowserModelEngine {
     });
   }
 
+  //Dev Comments: Verifies the designated Web Worker contains the active LLM/Engine configuration. Reinitializes/recreates workers on model changes to avoid session collision.
   private ensureWorkerReadyForModel(category: string, modelId: string) {
     if (this.useLocalServerApi) return;
 
     const modelKey = `${category}:${modelId}`;
+    if (this.enableDualBrain && category === "text") {
+      const keys = ["brain1", "brain2"];
+      for (const key of keys) {
+        const hasWorker = !!this.workers.get(key);
+        const currentlyLoaded = this.loadedModelIdByWorker.get(key);
+        const isChanging = currentlyLoaded !== undefined && currentlyLoaded !== modelKey;
+
+        if (hasWorker && isChanging) {
+          console.log(`🔄 Dual Brain model changing on worker [${key}] from [${currentlyLoaded}] to [${modelKey}]. Disposing and recreating...`);
+          this.restartWorker(key);
+        }
+        this.loadedModelIdByWorker.set(key, modelKey);
+      }
+      return;
+    }
+
     const workerKey = this.getWorkerKeyForCategory(category);
     const hasWorker = !!this.workers.get(workerKey);
     const currentlyLoaded = this.loadedModelIdByWorker.get(workerKey);
@@ -397,7 +551,37 @@ export class BrowserModelEngine {
     this.loadedModelIdByWorker.set(workerKey, modelKey);
   }
 
+  setEnableTurboMode(val: boolean) {
+    this.enableTurboMode = val;
+    if (val) {
+      this.useLocalServerApi = true;
+      console.log("🚀 [Turbo Mode] Enabled. Routing all inference to local Node.js server with full RAM access.");
+    } else {
+      const isElectron = typeof window !== "undefined" && !!(window as any).electron;
+      if (isElectron) {
+        this.useLocalServerApi = false;
+      } else {
+        const checkLocalServer = async () => {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 1500);
+            const res = await fetch("http://localhost:9777/api/health", { signal: controller.signal });
+            clearTimeout(timeoutId);
+            this.useLocalServerApi = res.ok;
+          } catch (e) {
+            this.useLocalServerApi = false;
+          }
+        };
+        checkLocalServer();
+      }
+    }
+  }
+
   async init() {
+    if (this.enableTurboMode) {
+      this.useLocalServerApi = true;
+      return { success: true, mode: "api" };
+    }
     const isElectron = typeof window !== "undefined" && !!(window as any).electron;
     if (!isElectron) {
       try {
@@ -430,13 +614,64 @@ export class BrowserModelEngine {
     });
   }
 
+  //Dev Comments: Orchestrates loading requested models on selected categories, handling special engines like tts, multi-worker parallel loads for Dual Brain text models, and single-worker default pathways.
   async loadModel(category: string, modelId: string, progressCallback?: (p: any) => void, customDtype?: string) {
-    this.ensureWorkerReadyForModel(category, modelId);
+    if (category === "tts") {
+      this.hasTts = true;
+      this.restartTtsIdleTimer();
+      if (progressCallback) {
+        progressCallback({ status: "init", file: "Kokoro TTS Engine" });
+      }
+      try {
+        await tts.init();
+        if (progressCallback) {
+          progressCallback({ status: "loaded", file: "Kokoro TTS Engine" });
+        }
+        this.restartTtsIdleTimer();
+        this.notify();
+        return { success: true, mode: "main-thread" };
+      } catch (err: any) {
+        this.restartTtsIdleTimer();
+        console.error("Failed to initialize main-thread Kokoro TTS:", err);
+        if (progressCallback) {
+          progressCallback({ status: "error", file: "Kokoro TTS Engine", error: err?.message || String(err) });
+        }
+        throw err;
+      }
+    }
+
     const modelKey = `${category}:${modelId}`;
+
+    if (this.enableDualBrain && category === "text") {
+      this.ensureWorkerReadyForModel(category, modelId);
+      this.currentModelId = modelKey;
+
+      if (this.useLocalServerApi) {
+        console.log(`🚀 Omnix local server active. Bypassing browser-side model download/load for dual brain text model: ${modelKey}`);
+        if (progressCallback) {
+          progressCallback({ status: "init", file: "Omnix Local API Engine (Dual Brain)" });
+          setTimeout(() => {
+            progressCallback({ status: "loaded", file: "Omnix Local API Engine (Dual Brain)" });
+          }, 100);
+        }
+        this.notify();
+        return { success: true, mode: "api" };
+      }
+
+      if (progressCallback) progressCallback({ status: "init", file: "Brain 1" });
+      const res1 = await this.postToWorker("loadModel", { category, modelId, customDtype }, progressCallback, undefined, "brain1");
+
+      if (progressCallback) progressCallback({ status: "init", file: "Brain 2" });
+      const res2 = await this.postToWorker("loadModel", { category, modelId, customDtype }, progressCallback, undefined, "brain2");
+
+      this.notify();
+      return res1;
+    }
+
+    this.ensureWorkerReadyForModel(category, modelId);
     if (category === "stt") {
       this.hasStt = true;
-    } else if (category === "tts") {
-      this.hasTts = true;
+      this.restartSttIdleTimer();
     } else if (this.enableMMRS) {
       if (category === "text") {
         this.currentModelId = modelKey;
@@ -475,7 +710,45 @@ export class BrowserModelEngine {
     return res;
   }
 
+  async unloadWorker(key: string) {
+    if (this.useLocalServerApi) {
+      this.notify();
+      return { success: true };
+    }
+    const w = this.workers.get(key);
+    if (w) {
+      console.log(`🧹 Unloading/terminating worker [${key}]...`);
+      try {
+        await this.postToWorker("clear", undefined, undefined, undefined, key).catch(() => {});
+      } catch (e) {}
+      w.terminate();
+      this.workers.delete(key);
+    }
+    this.loadedModelIdByWorker.delete(key);
+    if (key === "stt") {
+      this.hasStt = false;
+      if (this.sttIdleTimeoutId) {
+        clearTimeout(this.sttIdleTimeoutId);
+        this.sttIdleTimeoutId = null;
+      }
+    }
+    this.notify();
+    return { success: true };
+  }
+
   async clear() {
+    if (this.sttIdleTimeoutId) {
+      clearTimeout(this.sttIdleTimeoutId);
+      this.sttIdleTimeoutId = null;
+    }
+    if (this.ttsIdleTimeoutId) {
+      clearTimeout(this.ttsIdleTimeoutId);
+      this.ttsIdleTimeoutId = null;
+    }
+    
+    // Unload Kokoro TTS to free memory
+    await tts.unload().catch(e => console.error("Error unloading Kokoro TTS during clear:", e));
+
     if (this.useLocalServerApi) {
       this.currentModelId = null;
       this.currentOpModelId = null;
@@ -590,15 +863,21 @@ export class BrowserModelEngine {
     }
 
     if (category === "tts") {
+      if (this.ttsIdleTimeoutId) {
+        clearTimeout(this.ttsIdleTimeoutId);
+        this.ttsIdleTimeoutId = null;
+      }
       const voiceID = options.voiceID || options.voiceId || options.modelId || "af_heart";
       try {
         console.log(`🎙️ Running main-thread Kokoro TTS via kokoro-js for voice: ${voiceID}`);
         const raw = await tts.generateRaw(input, voiceID);
+        this.restartTtsIdleTimer();
         return {
           audio: Array.from(raw.audio),
           sampling_rate: raw.sampling_rate
         };
       } catch (err: any) {
+        this.restartTtsIdleTimer();
         console.error("Main-thread Kokoro TTS failed:", err);
         throw err;
       }
@@ -649,13 +928,15 @@ export class BrowserModelEngine {
           modelId: modelId,
           temperature: options.temperature,
           top_p: options.top_p,
-          maxTokens: options.maxTokens
+          maxTokens: options.maxTokens,
+          turbo: this.enableTurboMode
         };
       } else if (category === "director") {
         url = "http://localhost:9777/api/director";
         body = {
           prompt: input,
-          modelId: modelId
+          modelId: modelId,
+          turbo: this.enableTurboMode
         };
       } else if (category === "vision") {
         url = "http://localhost:9777/api/vision";
@@ -779,7 +1060,8 @@ export class BrowserModelEngine {
       "runInference",
       { category, input, options },
       options.progress_callback,
-      onToken
+      onToken,
+      options.targetWorkerKey
     );
 
     if (res instanceof RawImage) {

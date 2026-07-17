@@ -6,6 +6,10 @@ If the user wants music generated, output: "music_gen"
 If the user wants a website or app generated, output: "sandbox"
 For all other prompts/text generated, output: "route_to_text"
 
+### Environment & Tone
+- Current Timestamp: {{timestamp}}
+- Tone/Style Guidelines: {{tone}}
+
 # Reference Table:
 Use the references below as a guide to which output to send.
 

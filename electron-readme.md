@@ -48,7 +48,7 @@ To prepare the application for production:
 ## Troubleshooting
 
 - **WebGPU Errors**: Ensure your graphics drivers are up to date. Some older GPUs may not support WebGPU.
-- **Port Conflicts**: If port 7770 is occupied, the Electron app may fail to connect. Ensure no other services are running on port 7770.
+- **Port Conflicts**: If port 9777 is occupied, the Electron app may fail to connect. Ensure no other services are running on port 9777.
 - **Tray Icon**: If the tray icon doesn't appear, ensure you have placed a valid `icon.png` in the `electron/` directory.
 
 ---

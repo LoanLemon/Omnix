@@ -12,6 +12,7 @@ export interface ModelInfo {
   make?: string;
   minRam?: number; // Minimum RAM in GB
   maxContextChars?: number; // Maximum safe context length in characters
+  tokenBoost?: number; // Additional tokens to grant (e.g. for thinking/reasoning models)
 }
 
 export const MODELS: ModelInfo[] = [
@@ -26,7 +27,8 @@ export const MODELS: ModelInfo[] = [
     "category": "text",
     "make": "QWEN",
     "minRam": 3,
-    "maxContextChars": 8192
+    "maxContextChars": 8192,
+    "tokenBoost": 1024
   },
   {
     "id": "qwen-2.5-coder-3b-q4",
@@ -39,7 +41,8 @@ export const MODELS: ModelInfo[] = [
     "category": "coder",
     "make": "QWEN",
     "minRam": 3,
-    "maxContextChars": 16384
+    "maxContextChars": 16384,
+    "tokenBoost": 1024
   },
   {
     "id": "qwen-2.5-coder-3b-text",
@@ -52,7 +55,8 @@ export const MODELS: ModelInfo[] = [
     "category": "text",
     "make": "QWEN",
     "minRam": 3,
-    "maxContextChars": 16384
+    "maxContextChars": 16384,
+    "tokenBoost": 1024
   },
   {
     "id": "use-text-model",
@@ -75,7 +79,8 @@ export const MODELS: ModelInfo[] = [
     "category": "director",
     "make": "QWEN",
     "minRam": 1,
-    "maxContextChars": 6000
+    "maxContextChars": 6000,
+    "tokenBoost": 1024
   },
   {
     "id": "qwen-3-0.6b-q4",
@@ -87,7 +92,8 @@ export const MODELS: ModelInfo[] = [
     "qtypes": ["q4f16", "fp16" ],
     "category": "director",
     "make": "QWEN",
-    "minRam": 1
+    "minRam": 1,
+    "tokenBoost": 1024
   },
   {
     "id": "tiny-llm-10m",
@@ -113,7 +119,8 @@ export const MODELS: ModelInfo[] = [
     "category": "text",
     "make": "QWEN",
     "minRam": 1,
-    "maxContextChars": 6000
+    "maxContextChars": 6000,
+    "tokenBoost": 1024
   },
   {
     "id": "llama-3.2-1b",
@@ -143,7 +150,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     "id": "llama-3.2-3b-q4",
-    "modelID": "LemOneLabs/Llama-3.2-3B-Instruct-GENAI-ONNX",
+    "modelID": "LemOneLabs/Llama-3.2-3B-Instruct-ONNX",
     "name": "Llama 3.2 3B",
     "description": "Meta's flagship small model. Excellent reasoning and instruction following.",
     "size": "~2.2GB",
@@ -191,7 +198,8 @@ export const MODELS: ModelInfo[] = [
     "category": "text",
     "make": "QWEN",
     "minRam": 4,
-    "maxContextChars": 16384
+    "maxContextChars": 16384,
+    "tokenBoost": 1024
   },
   {
     "id": "bonsai-8b-q4",
@@ -205,6 +213,16 @@ export const MODELS: ModelInfo[] = [
     "make": "Bonsai",
     "minRam": 8,
     "maxContextChars": 32768
+  },
+  {
+    "id": "cascade-pipeline",
+    "modelID": "cascade-pipeline",
+    "name": "[Cascade Pipeline]",
+    "description": "Routes speech/audio through our standard STT and general Text models sequentially.",
+    "category": "live",
+    "make": "DYNAMIC",
+    "minRam": 0,
+    "maxContextChars": 16384
   },
   {
     "id": "voxtral-mini-3b-q4",
@@ -321,6 +339,18 @@ export const MODELS: ModelInfo[] = [
     make: "META",
     minRam: 2,
   },
+  {
+    id: "ACE-Step-v1.5-ONNX",
+    modelID: "LemOneLabs/ACE-Step-v1.5-ONNX",
+    name: "ACE-Step v1.5",
+    description: "An attentional-chirplet-embedding music generation model optimized for step-by-step sonic generation.",
+    size: "~1.5GB to 9GB",
+    dtype: "q4",
+    qtypes: ["q4", "q4v2", "fp16", "fp16_v2"],
+    category: "music-gen",
+    make: "LemOneLabs",
+    minRam: 2,
+  },
 ];
 
 /**
@@ -331,7 +361,7 @@ export const MODELS: ModelInfo[] = [
  */
 export function normalizeAndRegisterModel(
   modelId: string,
-  category: "text" | "vision" | "tts" | "image-gen" | "stt" | "music-gen" | "director" | "coder" | "embedding" = "text"
+  category: "live" | "text" | "vision" | "tts" | "image-gen" | "stt" | "music-gen" | "director" | "coder" | "embedding" = "text"
 ): ModelInfo {
   if (!modelId || typeof modelId !== "string") {
     return MODELS[0]; // fallback

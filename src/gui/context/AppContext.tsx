@@ -63,17 +63,45 @@ interface AppContextType {
   setActiveResearch: (val: any) => void;
   enableMMRS: boolean;
   setEnableMMRS: (val: boolean) => void;
+  enableDualBrain: boolean;
+  setEnableDualBrain: (val: boolean) => void;
+  dualBrainMode: "enhanced-speed" | "double-check";
+  setDualBrainMode: (val: "enhanced-speed" | "double-check") => void;
+  enableTurboMode: boolean;
+  setEnableTurboMode: (val: boolean) => void;
   mmrsModel: "text" | "image" | "music";
   setMmrsModel: (val: "text" | "image" | "music") => void;
   mmrsMode: "operational" | "bob" | "duality" | "polarity";
   setMmrsMode: (val: "operational" | "bob" | "duality" | "polarity") => void;
   inactivityTimeout: number;
   setInactivityTimeout: (val: number) => void;
+  onlyExecute: boolean;
+  setOnlyExecute: (val: boolean) => void;
+  developerView: boolean;
+  setDeveloperView: (val: boolean) => void;
   relayActive: boolean;
   isApiServerActive: boolean;
   startRelayServer: () => Promise<void>;
   launchApiServer: () => Promise<void>;
   shutdownApiServer: () => Promise<void>;
+
+  // ACE Vocal Synthesizer State
+  aceBpm: number;
+  setAceBpm: (val: number) => void;
+  aceKey: string;
+  setAceKey: (val: string) => void;
+  aceRegisterShift: number;
+  setAceRegisterShift: (val: number) => void;
+  aceVibratoSwell: number;
+  setAceVibratoSwell: (val: number) => void;
+  aceReverbDelayFeed: number;
+  setAceReverbDelayFeed: (val: number) => void;
+  aceVocalStyle: string;
+  setAceVocalStyle: (val: string) => void;
+  aceKokoroVoice: string;
+  setAceKokoroVoice: (val: string) => void;
+  aceAutoSettings: boolean;
+  setAceAutoSettings: (val: boolean) => void;
 
   // Model State
   isModelLoading: boolean;

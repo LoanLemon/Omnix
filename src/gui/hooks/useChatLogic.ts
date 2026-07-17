@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Message, ChatMode, FocusTopic, ErrorReport } from "@shared/types";
 import { MODELS } from "@shared/modelList";
 import { browserEngine } from "@/lib/ModelEngine";
-import { memoryStore } from "@/lib/memory";
+import { memoryStore, chunkBySentences, classifyChunk, prioritizeAndClassifyMemories } from "@/lib/memory";
 import { parseMarkdownToolCalls } from "@/lib/parseMarkdownToolCalls";
 import {
   TEXT_SYSTEM_PROMPT,
@@ -17,14 +17,21 @@ import {
   distillMemories,
   formatConversationTranscript,
   getToneInstruction,
+  RESEARCH_SUMMARY_SYSTEM_PROMPT,
+  SINGLE_SUMMARY_SYSTEM_PROMPT,
+  getResearchSummaryPrompt,
+  getSingleResultSummaryPrompt,
+  getFinalSystemPromptWithResults,
+  ONLY_EXECUTE_INSTRUCTION,
+  ONLY_EXECUTE_SENDMSG,
+  ONLY_EXECUTE_REGEN,
+  RESEARCH_TOOL_INSTRUCTION,
+  analyzeAndPreprocessPrompt,
+  getFormattedTimestamp,
 } from "@shared/prompts";
 
-export const getFormattedTimestamp = () => {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-};
 
+//Dev Comments: Chunks large input texts into smaller fragments preserving block structure and falling back gracefully on punctuation or hard cutoffs to fit constraints.
 function chunkText(text: string, maxLength: number): string[] {
   if (text.length <= maxLength) return [text];
   
@@ -74,7 +81,17 @@ function chunkText(text: string, maxLength: number): string[] {
   return chunks;
 }
 
-function loadWebviewTextAndResults(url: string, isInitialSearch: boolean, liveResearchEnabled?: boolean): Promise<{ text: string, results: string[] }> {
+function getDomainName(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.replace("www.", "");
+  } catch (e) {
+    return url;
+  }
+}
+
+//Dev Comments: Performs real-time web retrieval. Fetches via server proxy or mounts an Electron-native webview dynamically if live-research is enabled to bypass CORS.
+function loadWebviewTextAndResults(url: string, isInitialSearch: boolean, liveResearchEnabled?: boolean): Promise<{ text: string, results: Array<{ title: string, url: string }> }> {
   const isElectron = typeof window !== "undefined" && window.navigator && window.navigator.userAgent && window.navigator.userAgent.includes("Electron");
   
   if (!isElectron || !liveResearchEnabled) {
@@ -117,7 +134,7 @@ function loadWebviewTextAndResults(url: string, isInitialSearch: boolean, liveRe
       webview.src = url;
 
       let resolved = false;
-      const cleanupAndResolve = (text: string, results: string[]) => {
+      const cleanupAndResolve = (text: string, results: any[]) => {
         if (resolved) return;
         resolved = true;
         try {
@@ -140,7 +157,7 @@ function loadWebviewTextAndResults(url: string, isInitialSearch: boolean, liveRe
         try {
           // Execute script to get text and optional results
           const text = await webview.executeJavaScript("document.body.innerText || ''");
-          let results: string[] = [];
+          let results: any[] = [];
           if (isInitialSearch) {
             results = await webview.executeJavaScript(`
               (() => {
@@ -161,7 +178,14 @@ function loadWebviewTextAndResults(url: string, isInitialSearch: boolean, liveRe
                   if (elements.length === 0) {
                     elements = Array.from(document.querySelectorAll('.result a'));
                   }
-                  return elements.map(el => el.textContent || el.innerText || "").map(t => t.trim()).filter(Boolean);
+                  return elements.map(el => {
+                    const title = (el.textContent || el.innerText || "").trim();
+                    let url = el.href || "";
+                    if (url.startsWith("//")) {
+                      url = "https:" + url;
+                    }
+                    return { title, url };
+                  }).filter(item => item.title && item.url);
                 } catch (err) {
                   return [];
                 }
@@ -234,6 +258,18 @@ export function useChatLogic(
   researchEnabled?: boolean,
   liveResearchEnabled?: boolean,
   researchSrc?: string,
+  aceBpm?: number,
+  aceKey?: string,
+  aceRegisterShift?: number,
+  aceVibratoSwell?: number,
+  aceReverbDelayFeed?: number,
+  aceVocalStyle?: string,
+  aceKokoroVoice?: string,
+  aceAutoSettings?: boolean,
+  onAceParamsUpdate?: (params: any) => void,
+  enableDualBrain?: boolean,
+  dualBrainMode?: "enhanced-speed" | "double-check",
+  onlyExecute?: boolean,
 ) {
   const [input, setInput] = useState("");
   const [isTextGenerating, setIsTextGenerating] = useState(false);
@@ -319,21 +355,35 @@ export function useChatLogic(
       content: string,
       sender: "User" | "AI",
       direction: "Input" | "Output",
+      extraMetadata?: any,
     ) => {
       if (!content || content.trim().length < 5) return;
       try {
-        console.log("Adding memory indices for:", content.substring(0, 30));
-        const embedding = await browserEngine.getEmbedding(content);
-        await memoryStore.add({
-          id:
-            typeof crypto !== "undefined" && crypto.randomUUID
-              ? crypto.randomUUID()
-              : Math.random().toString(36).substring(2, 11),
-          text: content,
-          embedding,
-          timestamp: Date.now(),
-          metadata: { sender, direction },
-        });
+        const chunks = chunkBySentences(content).filter(c => c.length >= 5);
+        if (chunks.length === 0) return;
+
+        console.log(`Adding ${chunks.length} memory indices for content.`);
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          const embedding = await browserEngine.getEmbedding(chunk);
+          const classification = classifyChunk(chunk);
+          
+          await memoryStore.add({
+            id:
+              typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : Math.random().toString(36).substring(2, 11),
+            text: chunk,
+            embedding,
+            timestamp: Date.now() + i,
+            metadata: { 
+              sender, 
+              direction,
+              classification,
+              ...extraMetadata
+            },
+          });
+        }
         await refreshMemoryCount();
       } catch (e) {
         console.warn("RAG Indexer Failure:", e);
@@ -359,6 +409,24 @@ export function useChatLogic(
         setIsGenerating(true);
       }
       addLog(`Engine: Executing ${category} task...`, "info");
+
+      if (assistantMsgId) {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id === assistantMsgId) {
+              return {
+                ...m,
+                category,
+                stats: {
+                  startTime: Date.now(),
+                  finished: false,
+                },
+              };
+            }
+            return m;
+          })
+        );
+      }
 
       let targetModelId =
         options.modelId ||
@@ -424,8 +492,29 @@ export function useChatLogic(
                 }));
               }
             });
-            const matches = await memoryStore.search(queryVector, 3, 0.45);
-            let dbItems = [...(matches || [])];
+            const rawMatches = await memoryStore.search(queryVector, 15, 0.20);
+            const rawAllDbEntries = await memoryStore.getAll();
+
+            const filterBadResponses = (entry: any) => {
+              if (!entry) return false;
+              const tag = entry.metadata?.tag;
+              const tags = entry.metadata?.tags;
+              if (tag === "NEGATIVE/BAD RESPONSE") return false;
+              if (Array.isArray(tags) && tags.includes("NEGATIVE/BAD RESPONSE")) return false;
+              return true;
+            };
+
+            const matches = (rawMatches || []).filter(filterBadResponses);
+            const allDbEntries = (rawAllDbEntries || []).filter(filterBadResponses);
+
+            const { prioritized, debugLogs } = prioritizeAndClassifyMemories(
+              matches,
+              allDbEntries,
+              5
+            );
+
+            debugLogs.forEach(log => console.log(`[RAG PRIORITIZER] ${log}`));
+            let dbItems = [...prioritized];
 
             // Force-inject recent memory notes if the query is a meta-request asking what the AI remembers/knows
             if (isMemoryQuery) {
@@ -433,7 +522,7 @@ export function useChatLogic(
                 "Memory-recall intent detected. Retrieving latest database memories...",
                 "info",
               );
-              const allMemories = await memoryStore.getAll();
+              const allMemories = (await memoryStore.getAll()).filter(filterBadResponses);
               const recent = allMemories
                 .sort((a, b) => b.timestamp - a.timestamp)
                 .slice(0, 10);
@@ -502,32 +591,18 @@ export function useChatLogic(
           }
         }
 
-        finalSystemPrompt = options.systemPrompt || "";
-        if (researchEnabled && category === "text") {
-          const researchToolInstruction = `
-## Research tool
-For up-to-date news, or events output only "research: [query]"
-Where [query] is the search query you want to run.
-
-### Example 1
-User says, "Can you give me the SpaceX launch date?"
-You response, "research: latest SpaceX launch date"
-
-### Example 2
-User says, "Can you give me the latest news?"
-Your resposne, "research: news"
-
-### Constraints
-- Output ONLY "research: [query]". 
-- DO NOT attempt to generate the results!
-- NEVER rely on interna data for news/events!
-- NO Additional context, conversational text, or acknowledgements!
-`;
-          finalSystemPrompt =
-            (finalSystemPrompt ? `${finalSystemPrompt}\n\n` : "") +
-            researchToolInstruction;
+        if (onlyExecute) {
+          finalSystemPrompt = ONLY_EXECUTE_INSTRUCTION;
+        } else {
+          finalSystemPrompt = options.systemPrompt || "";
+          if (researchEnabled && category === "text") {
+            finalSystemPrompt =
+              (finalSystemPrompt ? `${finalSystemPrompt}\n\n` : "") +
+              RESEARCH_TOOL_INSTRUCTION;
+          }
         }
 
+        const timestampText = getFormattedTimestamp();
         const savedOcean = (() => {
           try {
             const saved = localStorage.getItem("breamu_ocean_personality");
@@ -535,24 +610,28 @@ Your resposne, "research: news"
           } catch (e) {}
           return undefined;
         })();
-        if (savedOcean && (category === "text" || category === "vision" || category === "coder")) {
+        let toneText = "Direct, clean, concise, helpful, and professional.";
+        let oceanApplied = false;
+        if (savedOcean) {
           const personalityBlock = getToneInstruction(savedOcean);
           if (personalityBlock) {
-            finalSystemPrompt = `${personalityBlock}\n\n${finalSystemPrompt}`;
+            toneText = personalityBlock;
+            oceanApplied = true;
           }
         }
-        const timeStr = `[Current Time & Date: ${getFormattedTimestamp()}]`;
-        finalSystemPrompt = finalSystemPrompt
-          ? `${timeStr}\n\n${finalSystemPrompt}`
-          : timeStr;
 
-        if (contextNotes) {
-          const memoryPrompt = formatMemoryPrompt(contextNotes, isMemoryQuery);
-          if (memoryPrompt) {
-            finalSystemPrompt =
-              (finalSystemPrompt ? `${finalSystemPrompt}\n\n` : "") +
-              memoryPrompt;
+        if (finalSystemPrompt.includes("{{tone}}") || finalSystemPrompt.includes("{{timestamp}}")) {
+          finalSystemPrompt = finalSystemPrompt
+            .replace(/\{\{tone\}\}/g, toneText)
+            .replace(/\{\{timestamp\}\}/g, timestampText);
+        } else {
+          if (oceanApplied && (category === "text" || category === "vision" || category === "coder")) {
+            finalSystemPrompt = `${toneText}\n\n${finalSystemPrompt}`;
           }
+          const timeStr = `[Current Time & Date: ${timestampText}]`;
+          finalSystemPrompt = finalSystemPrompt
+            ? `${timeStr}\n\n${finalSystemPrompt}`
+            : timeStr;
         }
 
         if (enableFocusTopics && focusTopics && focusTopics.length > 0) {
@@ -584,115 +663,498 @@ Your resposne, "research: news"
           }
         }
 
+        // --- START TAG REPLACEMENT LOGIC ---
+        const getWords = (str: string): string[] => {
+          if (!str) return [];
+          const STOP_WORDS = new Set([
+            "the", "be", "to", "of", "and", "a", "in", "that", "have", "i", "it", "for", "not", "on", "with", "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", "say", "her", "she", "or", "an", "will", "my", "one", "all", "would", "there", "their", "what", "so", "up", "out", "if", "about", "who", "get", "which", "go", "me", "when", "make", "can", "like", "time", "no", "just", "him", "know", "take", "people", "into", "year", "your", "good", "some", "could", "them", "see", "other", "than", "then", "now", "look", "only", "come", "its", "over", "think", "also", "back", "after", "use", "two", "how", "our", "work", "first", "well", "way", "even", "new", "want", "because", "any", "these", "give", "day", "most", "us"
+          ]);
+          return str
+            .toLowerCase()
+            .replace(/[^\w\s]/g, " ")
+            .split(/\s+/)
+            .filter((word: string) => word.length >= 3 && !STOP_WORDS.has(word));
+        };
+
+        const currentWords = new Set(getWords(text || ""));
+        const userPrompts = adjustedHistory
+          .filter((m: any) => m.role === "user")
+          .map((m: any) => m.content || m.text || "");
+        const lastPrompt = userPrompts[userPrompts.length - 1] || "";
+        const secondToLastPrompt = userPrompts[userPrompts.length - 2] || "";
+
+        const lastWords = new Set(getWords(lastPrompt));
+        const secondToLastWords = new Set(getWords(secondToLastPrompt));
+
+        const getScore = (historyText: string): number => {
+          const historyWords = getWords(historyText);
+          let score = 0;
+          for (const word of historyWords) {
+            // 3 points for matching current prompt
+            for (const cw of currentWords) {
+              if (word === cw || (cw.length > 3 && word.includes(cw)) || (word.length > 3 && cw.includes(word))) {
+                score += 3;
+                break;
+              }
+            }
+            // 2 points for matching last prompt
+            for (const lw of lastWords) {
+              if (word === lw || (lw.length > 3 && word.includes(lw)) || (word.length > 3 && lw.includes(word))) {
+                score += 2;
+                break;
+              }
+            }
+            // 1 point for matching 2nd to last prompt
+            for (const sw of secondToLastWords) {
+              if (word === sw || (sw.length > 3 && word.includes(sw)) || (word.length > 3 && sw.includes(word))) {
+                score += 1;
+                break;
+              }
+            }
+          }
+          return score;
+        };
+
+        let orderCounter = 0;
+
+        let historyItems = adjustedHistory.map((m: any) => {
+          const roleLabel = m.role === "assistant" || m.role === "model" ? "AI" : "User";
+          const textContent = m.content || m.text || "";
+          return {
+            type: "history" as const,
+            timestamp: m.timestamp ? new Date(m.timestamp).getTime() : 0,
+            text: `${roleLabel}: ${textContent}`,
+            original: m,
+            score: getScore(textContent),
+            order: orderCounter++
+          };
+        });
+
+        let filteredRagEntries = retrievedItems.filter((item: any) => {
+          const text = (item.text || item.content || "").trim();
+          if (!text) return false;
+          const lowerText = text.toLowerCase();
+          const isDup = historyItems.some((h: any) => {
+            const hText = (h.original.content || h.original.text || "").trim().toLowerCase();
+            return hText === lowerText || hText.includes(lowerText) || lowerText.includes(hText);
+          });
+          return !isDup;
+        });
+
+        let ragItems = filteredRagEntries.map((item: any) => {
+          const rawText = (item.text || item.content || "").trim();
+          let bullet = rawText;
+          bullet = bullet.replace(/^[-*•\s]+/, "").trim();
+          if (bullet.length > 120) {
+            bullet = bullet.slice(0, 117) + "...";
+          }
+          return {
+            type: "rag" as const,
+            timestamp: item.timestamp ? new Date(item.timestamp).getTime() : 0,
+            text: `- ${bullet}`,
+            original: item,
+            score: getScore(rawText),
+            order: orderCounter++
+          };
+        });
+
+        if (!finalSystemPrompt.includes("{{sessionHistory}}")) {
+          finalSystemPrompt = finalSystemPrompt + "\n\n### Session History\n{{sessionHistory}}";
+        }
+        if (!finalSystemPrompt.includes("{{ragResults}}")) {
+          finalSystemPrompt = finalSystemPrompt + "\n\n### RAG Results\n{{ragResults}}";
+        }
+
+        const baseSystemPrompt = finalSystemPrompt;
+
+        while (true) {
+          const historyStr = historyItems.map((item: any) => item.text).join("\n");
+          const ragStr = ragItems.map((item: any) => item.text).join("\n");
+
+          let tempPrompt = baseSystemPrompt
+            .replace(/\{\{sessionHistory\}\}/g, historyStr)
+            .replace(/\{\{ragResults\}\}/g, ragStr);
+
+          if (tempPrompt.length <= 1500) {
+            finalSystemPrompt = tempPrompt;
+            break;
+          }
+
+          if (historyItems.length === 0 && ragItems.length === 0) {
+            finalSystemPrompt = tempPrompt.slice(0, 1500);
+            break;
+          }
+
+          // Truncation strategy: Find the item with the absolute lowest score.
+          // Tie-breaker: choose the item with the lowest 'order' (oldest first).
+          let minScore = Infinity;
+          let candidateToTruncate: { arrayName: "history" | "rag"; index: number; order: number } | null = null;
+
+          // Check history items
+          for (let i = 0; i < historyItems.length; i++) {
+            const item = historyItems[i];
+            if (item.score < minScore) {
+              minScore = item.score;
+              candidateToTruncate = { arrayName: "history", index: i, order: item.order };
+            } else if (item.score === minScore && candidateToTruncate) {
+              if (item.order < candidateToTruncate.order) {
+                candidateToTruncate = { arrayName: "history", index: i, order: item.order };
+              }
+            }
+          }
+
+          // Check RAG items
+          for (let i = 0; i < ragItems.length; i++) {
+            const item = ragItems[i];
+            if (item.score < minScore) {
+              minScore = item.score;
+              candidateToTruncate = { arrayName: "rag", index: i, order: item.order };
+            } else if (item.score === minScore && candidateToTruncate) {
+              if (item.order < candidateToTruncate.order) {
+                candidateToTruncate = { arrayName: "rag", index: i, order: item.order };
+              }
+            }
+          }
+
+          if (candidateToTruncate) {
+            if (candidateToTruncate.arrayName === "history") {
+              historyItems.splice(candidateToTruncate.index, 1);
+            } else {
+              ragItems.splice(candidateToTruncate.index, 1);
+            }
+          } else {
+            // Fallback
+            finalSystemPrompt = tempPrompt.slice(0, 1500);
+            break;
+          }
+        }
+
+        adjustedHistory = historyItems.map((item: any) => item.original);
+        // --- END TAG REPLACEMENT LOGIC ---
+
+        let result: string = "";
         let accumulatedText = "";
-        const result = await browserEngine.runInference(
-          category,
-          text,
-          {
-            ...options,
-            chatHistory: adjustedHistory,
-            repetition_penalty: isSmallModel
-              ? 1.18
-              : options.repetition_penalty || undefined,
-            temperature: isSmallModel
-              ? 0.7
-              : options.temperature !== undefined
-                ? options.temperature
-                : temperature,
-            top_p: options.top_p !== undefined ? options.top_p : topP,
-            top_k: options.top_k !== undefined ? options.top_k : topK,
-            systemPrompt: finalSystemPrompt || undefined,
-            modelId: targetModelId,
-            progress_callback: (p: any) => {
-              if (p.status === "progress") {
-                setIsModelLoading(true);
-                setLoadingProgress((prev) => ({
-                  ...prev,
-                  [p.file]: {
-                    progress: p.progress,
-                    status: `Downloading ${p.file}`,
-                  },
-                }));
-              } else if (p.status === "init" || p.status === "loaded") {
-                setLoadingProgress((prev) => ({
-                  ...prev,
-                  [p.file || "engine"]: {
-                    progress: 100,
-                    status:
-                      p.status === "init"
-                        ? `Initializing ${p.file || "Engine"}`
-                        : "Model Loaded",
-                  },
-                }));
+
+        //Dev Comments: Dual Brain inference mode splits user input into individual sentence chunks using 'chunkBySentences' to run them through either parallel worker acceleration ('enhanced-speed') or dual-worker peer verification/agreement ('double-check').
+        if (enableDualBrain && (category === "text" || category === "coder")) {
+          try {
+            const sentences = chunkBySentences(text);
+
+            if (dualBrainMode === "double-check") {
+              addLog(`🧠 Dual Brain - Double-Check Mode: processing ${sentences.length} sentence chunks...`, "info");
+              let currentAccumulated = "";
+
+              for (let i = 0; i < sentences.length; i++) {
+                const sentence = sentences[i];
+                addLog(`🧠 Chunk ${i + 1}/${sentences.length}: Generating candidate responses on both brains...`, "info");
+
+                const [res1, res2] = await Promise.all([
+                  browserEngine.runInference(category, sentence, {
+                    ...options,
+                    chatHistory: adjustedHistory,
+                    targetWorkerKey: "brain1",
+                    maxTokens: 512,
+                    systemPrompt: finalSystemPrompt || undefined,
+                    modelId: targetModelId
+                  }),
+                  browserEngine.runInference(category, sentence, {
+                    ...options,
+                    chatHistory: adjustedHistory,
+                    targetWorkerKey: "brain2",
+                    maxTokens: 512,
+                    systemPrompt: finalSystemPrompt || undefined,
+                    modelId: targetModelId
+                  })
+                ]);
+
+                addLog(`🧠 Chunk ${i + 1}/${sentences.length}: Reviewing responses...`, "info");
+
+                const reviewPrompt = `Analyze the following candidate responses to the prompt/sentence: "${sentence}"
+
+Candidate Response 1:
+"${res1}"
+
+Candidate Response 2:
+"${res2}"
+
+Which candidate response is more accurate, complete, and higher quality?
+You must choose either 1 or 2.
+Respond with ONLY the number "1" or "2", nothing else. Do not write any other text or explanation. Choice:`;
+
+                const [review1, review2] = await Promise.all([
+                  browserEngine.runInference(category, reviewPrompt, {
+                    ...options,
+                    targetWorkerKey: "brain1",
+                    maxTokens: 10,
+                    systemPrompt: "Respond with ONLY 1 or 2.",
+                    modelId: targetModelId
+                  }),
+                  browserEngine.runInference(category, reviewPrompt, {
+                    ...options,
+                    targetWorkerKey: "brain2",
+                    maxTokens: 10,
+                    systemPrompt: "Respond with ONLY 1 or 2.",
+                    modelId: targetModelId
+                  })
+                ]);
+
+                const choice1 = review1.includes("2") && !review1.includes("1") ? 2 : 1;
+                const choice2 = review2.includes("2") && !review2.includes("1") ? 2 : 1;
+
+                let chosenIndex = choice1;
+                if (choice1 === choice2) {
+                  addLog(`🧠 Chunk ${i + 1}: Brain 1 and Brain 2 agreed on Choice ${choice1}.`, "success");
+                  chosenIndex = choice1;
+                } else {
+                  addLog(`🧠 Chunk ${i + 1}: Brain 1 chose Choice ${choice1}, Brain 2 chose Choice ${choice2}. Defaulting to Brain 1's choice (${choice1}).`, "info");
+                  chosenIndex = choice1;
+                }
+
+                const chosenResponse = chosenIndex === 1 ? res1 : res2;
+                currentAccumulated += (currentAccumulated ? "\n\n" : "") + chosenResponse;
+
+                setMessages((prev) => {
+                  const filtered = prev.filter((m) => !m.isThinking);
+                  return filtered.map((m) => {
+                    if (m.id === assistantMsgId) {
+                      return { ...m, content: currentAccumulated, fullContent: currentAccumulated, isQueued: false };
+                    }
+                    return m;
+                  });
+                });
+              }
+              result = currentAccumulated;
+              accumulatedText = currentAccumulated;
+            } else {
+              addLog(`🧠 Dual Brain - Enhanced Speed Mode: processing ${sentences.length} sentence chunks in parallel...`, "info");
+
+              const promises = sentences.map(async (sentence, index) => {
+                const brainKey = index % 2 === 0 ? "brain1" : "brain2";
+                addLog(`[${brainKey}] Processing chunk ${index + 1}/${sentences.length}: "${sentence.slice(0, 30)}..."`, "info");
+
+                const res = await browserEngine.runInference(
+                  category,
+                  sentence,
+                  {
+                    ...options,
+                    chatHistory: adjustedHistory,
+                    targetWorkerKey: brainKey,
+                    maxTokens: 512,
+                    systemPrompt: finalSystemPrompt || undefined,
+                    modelId: targetModelId
+                  }
+                );
+                addLog(`[${brainKey}] Completed chunk ${index + 1}/${sentences.length}`, "success");
+                return { index, sentence, brainKey, result: res };
+              });
+
+              const results = await Promise.all(promises);
+              results.sort((a, b) => a.index - b.index);
+
+              const lastBrain = (sentences.length - 1) % 2 === 0 ? "brain1" : "brain2";
+              const nextAvailableBrain = lastBrain === "brain1" ? "brain2" : "brain1";
+
+              addLog(`🧠 Asking ${nextAvailableBrain} to synthesize chunks into a unified response...`, "info");
+
+              const chunksSummary = results.map(r => `[Chunk ${r.index + 1} (${r.brainKey})]:\nPrompt Chunk: "${r.sentence}"\nResponse:\n${r.result}`).join("\n\n");
+
+              const summarizationPrompt = `You are a coordinator brain. You have processed a prompt in parallel chunks.
+Below are the individual chunks of the prompt and their generated response chunks.
+Your task is to synthesize, harmonize, and combine these individual responses into a single, cohesive, fluid, high-quality, and grammatically correct response that fully addresses the original prompt as a unified whole.
+Ensure the output flows naturally, removes redundant explanations or introductory/concluding filler from intermediate chunks, and reads like a single, expert response.
+
+Original Unified Prompt:
+"${text}"
+
+Generated Chunk Responses:
+${chunksSummary}
+
+Synthesized Final Response:`;
+
+              const finalResult = await browserEngine.runInference(
+                category,
+                summarizationPrompt,
+                {
+                  ...options,
+                  chatHistory: adjustedHistory,
+                  targetWorkerKey: nextAvailableBrain,
+                  systemPrompt: "You are an expert synthesizer. Provide ONLY the synthesized response.",
+                  modelId: targetModelId
+                },
+                (token) => {
+                  setIsModelLoading(false);
+                  setLoadingProgress({});
+
+                  accumulatedText += token;
+                  setMessages((prev) => {
+                    const filtered = prev.filter((m) => !m.isThinking);
+                    return filtered.map((m) => {
+                      if (m.id === assistantMsgId) {
+                        return { ...m, content: accumulatedText, fullContent: accumulatedText, isQueued: false };
+                      }
+                      return m;
+                    });
+                  });
+                }
+              );
+              result = finalResult;
+              if (!accumulatedText) accumulatedText = finalResult;
+            }
+          } catch (dualBrainErr: any) {
+            addLog(`🧠 Dual Brain failed: ${dualBrainErr?.message || dualBrainErr}. Falling back to standard single brain...`, "error");
+            result = await browserEngine.runInference(
+              category,
+              text,
+              {
+                ...options,
+                chatHistory: adjustedHistory,
+                repetition_penalty: isSmallModel ? 1.18 : options.repetition_penalty || undefined,
+                temperature: isSmallModel ? 0.7 : options.temperature !== undefined ? options.temperature : temperature,
+                top_p: options.top_p !== undefined ? options.top_p : topP,
+                top_k: options.top_k !== undefined ? options.top_k : topK,
+                systemPrompt: finalSystemPrompt || undefined,
+                modelId: targetModelId
+              },
+              (token) => {
+                setIsModelLoading(false);
+                setLoadingProgress({});
+                accumulatedText += token;
+                setMessages((prev) => {
+                  const filtered = prev.filter((m) => !m.isThinking);
+                  return filtered.map((m) => {
+                    if (m.id === assistantMsgId) {
+                      return { ...m, content: accumulatedText, fullContent: accumulatedText, isQueued: false };
+                    }
+                    return m;
+                  });
+                });
+              }
+            );
+          }
+        } else {
+          result = await browserEngine.runInference(
+            category,
+            text,
+            {
+              ...options,
+              chatHistory: adjustedHistory,
+              repetition_penalty: isSmallModel
+                ? 1.18
+                : options.repetition_penalty || undefined,
+              temperature: isSmallModel
+                ? 0.7
+                : options.temperature !== undefined
+                  ? options.temperature
+                  : temperature,
+              top_p: options.top_p !== undefined ? options.top_p : topP,
+              top_k: options.top_k !== undefined ? options.top_k : topK,
+              systemPrompt: finalSystemPrompt || undefined,
+              modelId: targetModelId,
+              progress_callback: (p: any) => {
+                if (p.status === "progress") {
+                  setIsModelLoading(true);
+                  setLoadingProgress((prev) => ({
+                    ...prev,
+                    [p.file]: {
+                      progress: p.progress,
+                      status: `Downloading ${p.file}`,
+                    },
+                  }));
+                } else if (p.status === "init" || p.status === "loaded") {
+                  setLoadingProgress((prev) => ({
+                    ...prev,
+                    [p.file || "engine"]: {
+                      progress: 100,
+                      status:
+                        p.status === "init"
+                          ? `Initializing ${p.file || "Engine"}`
+                          : "Model Loaded",
+                    },
+                  }));
+                }
+              },
+            },
+            (token) => {
+              setIsModelLoading(false);
+              setLoadingProgress({});
+
+              if (category === "text" || category === "coder") {
+                accumulatedText += token;
+                let thoughts = "";
+                let cleanText = "";
+                const lowerText = accumulatedText.toLowerCase();
+                const openIdx = lowerText.indexOf("<think>");
+                if (openIdx !== -1) {
+                  const closeIdx = lowerText.indexOf("</think>", openIdx + 7);
+                  if (closeIdx !== -1) {
+                    thoughts = accumulatedText.substring(openIdx + 7, closeIdx);
+                    cleanText =
+                      accumulatedText.substring(0, openIdx) +
+                      accumulatedText.substring(closeIdx + 8);
+                  } else {
+                    thoughts = accumulatedText.substring(openIdx + 7);
+                    cleanText = accumulatedText.substring(0, openIdx);
+                  }
+                } else {
+                  cleanText = accumulatedText;
+                }
+
+                let displayContent = "";
+                if (thinkEnabled && thoughts.trim()) {
+                  displayContent = `<|channel>thought\n${thoughts.trim()}\n<channel|>\n${cleanText}`;
+                } else {
+                  displayContent = cleanText;
+                }
+
+                if (feedSpeechToken) {
+                  feedSpeechToken(cleanText);
+                }
+
+                setMessages((prev) => {
+                  const filtered = prev.filter((m) => !m.isThinking);
+                  return filtered.map((m) => {
+                    if (m.id === assistantMsgId) {
+                      let actualContent = displayContent;
+                      if (speakEnabled) {
+                         actualContent = (thinkEnabled && thoughts.trim()) ? `<|channel>thought\n${thoughts.trim()}\n<channel|>\n` + (m.spokenContent || "") : (m.spokenContent || "");
+                      }
+                      const currentStats = m.stats || {};
+                      const elapsedMs = currentStats.startTime ? Date.now() - currentStats.startTime : 0;
+                      const approxTokens = Math.max(1, Math.round(displayContent.length / 4));
+                      const tps = elapsedMs > 0 ? (approxTokens / (elapsedMs / 1000)).toFixed(1) : "0.0";
+                      return {
+                        ...m,
+                        content: actualContent,
+                        fullContent: displayContent,
+                        isQueued: false,
+                        stats: {
+                          ...currentStats,
+                          tokens: approxTokens,
+                          tps,
+                        }
+                      };
+                    }
+                    return m;
+                  });
+                });
+              } else {
+                setMessages((prev) => {
+                  const filtered = prev.filter((m) => !m.isThinking);
+                  return filtered.map((m) => {
+                    if (m.id === assistantMsgId) {
+                      return {
+                        ...m,
+                        content: m.content + token,
+                        isQueued: false,
+                      };
+                    }
+                    return m;
+                  });
+                });
               }
             },
-          },
-          (token) => {
-            setIsModelLoading(false);
-            setLoadingProgress({}); // Clear once we start getting tokens
-
-            if (category === "text" || category === "coder") {
-              accumulatedText += token;
-              let thoughts = "";
-              let cleanText = "";
-              const lowerText = accumulatedText.toLowerCase();
-              const openIdx = lowerText.indexOf("<think>");
-              if (openIdx !== -1) {
-                const closeIdx = lowerText.indexOf("</think>", openIdx + 7);
-                if (closeIdx !== -1) {
-                  thoughts = accumulatedText.substring(openIdx + 7, closeIdx);
-                  cleanText =
-                    accumulatedText.substring(0, openIdx) +
-                    accumulatedText.substring(closeIdx + 8);
-                } else {
-                  thoughts = accumulatedText.substring(openIdx + 7);
-                  cleanText = accumulatedText.substring(0, openIdx);
-                }
-              } else {
-                cleanText = accumulatedText;
-              }
-
-              let displayContent = "";
-              if (thinkEnabled && thoughts.trim()) {
-                displayContent = `<|channel>thought\n${thoughts.trim()}\n<channel|>\n${cleanText}`;
-              } else {
-                displayContent = cleanText;
-              }
-
-              if (feedSpeechToken) {
-                feedSpeechToken(cleanText);
-              }
-
-              setMessages((prev) => {
-                const filtered = prev.filter((m) => !m.isThinking);
-                return filtered.map((m) => {
-                  if (m.id === assistantMsgId) {
-                    let actualContent = displayContent;
-                    if (speakEnabled) {
-                       actualContent = (thinkEnabled && thoughts.trim()) ? `<|channel>thought\n${thoughts.trim()}\n<channel|>\n` + (m.spokenContent || "") : (m.spokenContent || "");
-                    }
-                    return { ...m, content: actualContent, fullContent: displayContent, isQueued: false };
-                  }
-                  return m;
-                });
-              });
-            } else {
-              setMessages((prev) => {
-                const filtered = prev.filter((m) => !m.isThinking);
-                return filtered.map((m) => {
-                  if (m.id === assistantMsgId) {
-                    return {
-                      ...m,
-                      content: m.content + token,
-                      isQueued: false,
-                    };
-                  }
-                  return m;
-                });
-              });
-            }
-          },
-        );
+          );
+        }
 
         // Check for Research Tool call
         let cleanTextResult = (typeof result === "string" ? result : accumulatedText)
@@ -700,10 +1162,19 @@ Your resposne, "research: news"
           .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "")
           .trim();
         
-        const researchMatch = cleanTextResult.match(/^research:\s*(.+)$/i);
+        // Match "research: <query>" robustly anywhere, even if preceded by thinking/reasoning text
+        const researchMatch = cleanTextResult.match(/(?:^|[\r\n])\s*research:\s*([^\r\n]+)/i);
 
         if (researchEnabled && category === "text" && researchMatch && assistantMsgId) {
-          const searchQuery = researchMatch[1].trim();
+          let searchQuery = researchMatch[1].trim();
+          // Clean up model-generated quotes or trailing periods
+          if ((searchQuery.startsWith('"') && searchQuery.endsWith('"')) ||
+              (searchQuery.startsWith("'") && searchQuery.endsWith("'"))) {
+            searchQuery = searchQuery.slice(1, -1).trim();
+          }
+          if (searchQuery.endsWith('.')) {
+            searchQuery = searchQuery.slice(0, -1).trim();
+          }
           addLog(`Research Tool: Triggered search query "${searchQuery}"`, "info");
           
           setMessages((prev) => {
@@ -740,15 +1211,15 @@ Your resposne, "research: news"
             addLog(`Research Tool: Initial search loaded. Found ${initialData.results.length} results.`, "info");
             
             const resultsToResearch = initialData.results.slice(0, 3);
-            const deepDiveUrls = resultsToResearch.map(resTitle =>
-              chosenSrc.replace("[query]", encodeURIComponent(resTitle))
+            const deepDiveUrls = resultsToResearch.map(res =>
+              res.url || chosenSrc.replace("[query]", encodeURIComponent(res.title))
             );
 
             setActiveResearch({
               query: searchQuery,
               url: initialUrl,
               status: "Identifying Deep-Dive Subjects",
-              results: resultsToResearch,
+              results: resultsToResearch.map(r => r.title),
               deepDiveUrls: deepDiveUrls,
               currentDeepDiveIndex: -1,
               currentDeepDiveUrl: ""
@@ -759,7 +1230,7 @@ Your resposne, "research: news"
                 if (m.id === assistantMsgId) {
                   return {
                     ...m,
-                    content: `🔍 *Researching:* "${searchQuery}"\n\nDigging deeper into top results:\n${resultsToResearch.map((r, i) => `${i + 1}. ${r}`).join("\n")}`,
+                    content: `🔍 *Researching:* "${searchQuery}"\n\nDigging deeper into top results:\n${resultsToResearch.map((r, i) => `${i + 1}. [${r.title}](${r.url})`).join("\n")}`,
                   };
                 }
                 return m;
@@ -783,75 +1254,114 @@ Your resposne, "research: news"
             const initialTextCleaned = cleanAndTrim(initialData.text);
             const secondaryTextsCleaned = researchOutputs.map(output => cleanAndTrim(output.text));
 
-            const combinedResearchData = `
-Primary Search Results for "${searchQuery}":
-${initialTextCleaned}
+            const summaries: string[] = [];
 
-Deep Research results:
-${secondaryTextsCleaned.map((txt, i) => `Result ${i + 1} ("${resultsToResearch[i]}"):\n${txt}`).join("\n\n")}
-`.trim();
-
-            setActiveResearch({
-              query: searchQuery,
-              url: initialUrl,
-              status: "Analyzing Research Material",
-              results: resultsToResearch,
-              deepDiveUrls: deepDiveUrls,
-              currentDeepDiveIndex: resultsToResearch.length,
-              currentDeepDiveUrl: ""
-            });
-
-            setMessages((prev) => {
-              return prev.map((m) => {
-                if (m.id === assistantMsgId) {
-                  return {
-                    ...m,
-                    content: `🔍 *Researching:* "${searchQuery}"\n\nAnalyzing and summarizing gathered research data...`,
-                  };
-                }
-                return m;
-              });
-            });
-
-            addLog("Research Tool: Summarizing research data...", "info");
-            const summaryPrompt = `Please summarize the following web research data concisely. Highlight the key facts and details that are most relevant.
-
-Research Data:
-${combinedResearchData}`;
-
-            let summaryResult = "";
-            await browserEngine.runInference(
-              "text",
-              summaryPrompt,
-              {
-                ...options,
-                chatHistory: [], // empty chat history for intermediate summary
-                systemPrompt: "You are an expert research analyst summarizing web search results.",
-                progress_callback: () => {},
-              },
-              (token) => {
-                summaryResult += token;
-                setMessages((prev) => {
-                  return prev.map((m) => {
-                    if (m.id === assistantMsgId) {
-                      return {
-                        ...m,
-                        content: `🔍 *Researching:* "${searchQuery}"\n\n*Summary of findings:* \n\n${summaryResult}`,
-                      };
-                    }
-                    return m;
-                  });
-                });
+            const researchProgressCallback = (p: any) => {
+              if (p.status === "progress") {
+                setIsModelLoading(true);
+                setLoadingProgress((prev) => ({
+                  ...prev,
+                  [p.file]: {
+                    progress: p.progress,
+                    status: `Downloading ${p.file} (Research Model)`,
+                  },
+                }));
+              } else if (p.status === "init" || p.status === "loaded") {
+                setLoadingProgress((prev) => ({
+                  ...prev,
+                  [p.file || "engine"]: {
+                    progress: 100,
+                    status: p.status === "loaded" ? "Model Loaded" : "Initializing Engine",
+                  },
+                }));
               }
-            );
-            
+            };
+
+            for (let i = 0; i < resultsToResearch.length; i++) {
+              const res = resultsToResearch[i];
+              const contentText = secondaryTextsCleaned[i] || "";
+
+              addLog(`Research Tool: Summarizing result ${i + 1}/${resultsToResearch.length}...`, "info");
+
+              setActiveResearch({
+                query: searchQuery,
+                url: initialUrl,
+                status: `Analyzing Source ${i + 1}/${resultsToResearch.length}`,
+                results: resultsToResearch.map(r => r.title),
+                deepDiveUrls: deepDiveUrls,
+                currentDeepDiveIndex: i,
+                currentDeepDiveUrl: res.url
+              });
+
+              setMessages((prev) => {
+                return prev.map((m) => {
+                  if (m.id === assistantMsgId) {
+                    const existingSummaries = summaries.map((s, idx) => `*Source ${idx + 1} (${getDomainName(resultsToResearch[idx]?.url)}):*\n${s}`).join("\n\n");
+                    return {
+                      ...m,
+                      content: `🔍 *Researching:* "${searchQuery}"\n\nAnalyzing source ${i + 1}/${resultsToResearch.length}: [${res.title}](${res.url})...\n\n${existingSummaries}`,
+                    };
+                  }
+                  return m;
+                });
+              });
+
+              const singlePrompt = getSingleResultSummaryPrompt(res.title, res.url, contentText);
+              let singleSummary = "";
+
+              const singleSummaryResult = await browserEngine.runInference(
+                "text",
+                singlePrompt,
+                {
+                  ...options,
+                  chatHistory: [], // empty chat history for intermediate summary
+                  systemPrompt: SINGLE_SUMMARY_SYSTEM_PROMPT,
+                  progress_callback: researchProgressCallback,
+                },
+                (token) => {
+                  singleSummary += token;
+                  setMessages((prev) => {
+                    return prev.map((m) => {
+                      if (m.id === assistantMsgId) {
+                        const currentSummariesText = [
+                          ...summaries,
+                          singleSummary
+                        ].map((s, idx) => `*Source ${idx + 1} (${getDomainName(resultsToResearch[idx]?.url)}):*\n${s}`).join("\n\n");
+
+                        return {
+                          ...m,
+                          content: `🔍 *Researching:* "${searchQuery}"\n\nAnalyzing source ${i + 1}/${resultsToResearch.length}: [${res.title}](${res.url})...\n\n${currentSummariesText}`,
+                        };
+                      }
+                      return m;
+                    });
+                  });
+                }
+              );
+
+              if (singleSummaryResult) {
+                singleSummary = singleSummaryResult;
+              }
+              // Safeguard limit of 200 chars
+              if (singleSummary.length > 200) {
+                singleSummary = singleSummary.substring(0, 197) + "...";
+              }
+              summaries.push(singleSummary);
+            }
+
+            const summariesBlock = summaries.map((s, idx) => {
+              const r = resultsToResearch[idx];
+              return `- ${r.title} (Source: ${getDomainName(r.url)})
+${s} Read more at: ${r.url}`;
+            }).join("\n\n");
+
             addLog("Research Tool: Summary complete. Generating final response to user query...", "success");
 
             setActiveResearch({
               query: searchQuery,
               url: initialUrl,
               status: "Generating Final Response",
-              results: resultsToResearch,
+              results: resultsToResearch.map(r => r.title),
               deepDiveUrls: deepDiveUrls,
               currentDeepDiveIndex: resultsToResearch.length,
               currentDeepDiveUrl: ""
@@ -862,7 +1372,7 @@ ${combinedResearchData}`;
                 if (m.id === assistantMsgId) {
                   return {
                     ...m,
-                    content: `🔍 *Researching:* "${searchQuery}"\n\n*Summary of findings:* \n\n${summaryResult}\n\n---\n\n*Generating final response...*`,
+                    content: `🔍 *Researching:* "${searchQuery}"\n\n*Verified Source Summaries:* \n\n${summariesBlock}\n\n---\n\n*Generating final response...*`,
                   };
                 }
                 return m;
@@ -870,16 +1380,16 @@ ${combinedResearchData}`;
             });
 
             // Feed user's prompt and results summary to AI
-            const finalSystemPromptWithResults = `${options.systemPrompt || ""}\n\n[RESEARCH RESULTS SUMMARY]\n${summaryResult}\n\nUse the summarized research findings above to comprehensively and accurately answer the user's question. Reference key details from the research as appropriate.`;
+            const finalSystemPromptWithResults = getFinalSystemPromptWithResults(options.systemPrompt, summariesBlock);
 
             let finalResponse = "";
-            await browserEngine.runInference(
+            const finalInferenceResult = await browserEngine.runInference(
               "text",
               text, // original user query
               {
                 ...options,
                 systemPrompt: finalSystemPromptWithResults,
-                progress_callback: () => {},
+                progress_callback: researchProgressCallback,
               },
               (token) => {
                 finalResponse += token;
@@ -901,6 +1411,23 @@ ${combinedResearchData}`;
                 });
               }
             );
+
+            if (finalInferenceResult) {
+              finalResponse = finalInferenceResult;
+              setMessages((prev) => {
+                return prev.map((m) => {
+                  if (m.id === assistantMsgId) {
+                    return {
+                      ...m,
+                      content: finalResponse,
+                      fullContent: finalResponse,
+                      isQueued: false
+                    };
+                  }
+                  return m;
+                });
+              });
+            }
 
             if (flushSpeech) {
               flushSpeech(finalResponse);
@@ -938,11 +1465,18 @@ ${combinedResearchData}`;
               .filter((m) => !m.isThinking)
               .map((m) => {
                 if (m.id === assistantMsgId) {
+                  const currentStats = m.stats || {};
+                  const duration = currentStats.startTime ? parseFloat(((Date.now() - currentStats.startTime) / 1000).toFixed(1)) : 0;
                   return {
                     ...m,
                     content: "Image generated successfully.",
                     image: result as string,
                     isQueued: false,
+                    stats: {
+                      ...currentStats,
+                      duration,
+                      finished: true,
+                    }
                   };
                 }
                 return m;
@@ -954,16 +1488,31 @@ ${combinedResearchData}`;
               .filter((m) => !m.isThinking)
               .map((m) => {
                 if (m.id === assistantMsgId) {
+                  const currentStats = m.stats || {};
+                  const duration = currentStats.startTime ? parseFloat(((Date.now() - currentStats.startTime) / 1000).toFixed(1)) : 0;
                   return {
                     ...m,
-                    content: "Audio synthesized successfully.",
+                    content: (result as any).lyrics || "Audio synthesized successfully.",
                     audio: (result as any).audio,
                     isQueued: false,
+                    stats: {
+                      ...currentStats,
+                      duration,
+                      finished: true,
+                    }
                   };
                 }
                 return m;
               });
           });
+
+          if (aceAutoSettings && onAceParamsUpdate && (result as any).lyrics) {
+            // Find vocalParams if they were returned in the result or embedded inside it
+            const resData = result as any;
+            if (resData.vocalParams) {
+              onAceParamsUpdate(resData.vocalParams);
+            }
+          }
         } else {
           setMessages((prev) => {
             return prev
@@ -1003,15 +1552,271 @@ ${combinedResearchData}`;
                      actualFinalContent = thoughtsText + (m.spokenContent || "");
                   }
 
+                  const currentStats = m.stats || {};
+                  const duration = currentStats.startTime ? parseFloat(((Date.now() - currentStats.startTime) / 1000).toFixed(1)) : 0;
+                  const tokens = Math.max(1, Math.round(actualFinalContent.length / 4));
+                  const tps = duration > 0 ? (tokens / duration).toFixed(1) : "0.0";
+
+                  let scriptOutput = "";
+                  let isScript = false;
+                  let scriptOutputItems: { val: string; pending: boolean }[] | undefined = undefined;
+
+                  if (onlyExecute) {
+                    isScript = true;
+                    scriptOutput = "[Executing script...]";
+                    scriptOutputItems = [{ val: "[Executing script...]", pending: false }];
+                  }
+
                   return {
                     ...m,
                     content: actualFinalContent,
                     isQueued: false,
+                    isScript,
+                    scriptOutput,
+                    scriptOutputItems,
+                    stats: {
+                      ...currentStats,
+                      tokens,
+                      duration,
+                      tps,
+                      finished: true,
+                    }
                   };
                 }
                 return m;
               });
           });
+        }
+
+        // If ONLY EXEC mode is active, run the generated script cleanly as a top-level side-effect!
+        if (onlyExecute && assistantMsgId) {
+          let scriptToRun = (typeof result === "string" ? result : accumulatedText) || "";
+          
+          let cleanResult = scriptToRun;
+          cleanResult = cleanResult
+            .replace(/<think>[\s\S]*?<\/think>/gi, "")
+            .trim();
+          const thinkOpenIdx = cleanResult.toLowerCase().indexOf("<think>");
+          if (thinkOpenIdx !== -1) {
+            cleanResult = cleanResult.substring(0, thinkOpenIdx).trim();
+          }
+          cleanResult = cleanResult
+            .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "")
+            .trim();
+          if (!cleanResult && scriptToRun) {
+             cleanResult = scriptToRun.replace(/<think>|<\|channel>thought/gi, "").trim();
+          }
+
+          // Clean thoughts/thinking tags from script text
+          scriptToRun = scriptToRun.replace(/<think>[\s\S]*?<\/think>/gi, "")
+                                   .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "")
+                                   .trim();
+
+          const codeBlockRegex = /```(?:javascript|js)?([\s\S]*?)```/gi;
+          const match = codeBlockRegex.exec(scriptToRun);
+          if (match) {
+            scriptToRun = match[1];
+          } else {
+            scriptToRun = scriptToRun.replace(/```(?:javascript|js)?/gi, "").replace(/```/gi, "");
+          }
+          scriptToRun = scriptToRun.trim();
+
+          const outputs: string[] = [];
+          const pendings: boolean[] = [];
+          const sendMessage = async (val: any) => {
+            const index = outputs.length;
+            const textVal = String(val);
+            outputs.push(textVal);
+
+            const hasLoop = /\b(for|while)\s*\(/i.test(scriptToRun);
+            const isNum = typeof val === "number" || (!isNaN(Number(textVal)) && textVal.trim() !== "");
+            const shouldBypass = hasLoop || isNum;
+
+            pendings.push(!shouldBypass && textVal.trim() !== "");
+
+            setMessages((prev) =>
+              prev.map((msg) => {
+                if (msg.id === assistantMsgId) {
+                  const items = outputs.map((v, idx) => ({ val: v, pending: pendings[idx] }));
+                  return {
+                    ...msg,
+                    scriptOutput: outputs.join("\n"),
+                    scriptOutputItems: items,
+                  };
+                }
+                return msg;
+              })
+            );
+
+            let textToRewrite = textVal;
+            if (!shouldBypass && textVal.trim()) {
+              const savedOcean = (() => {
+                try {
+                  const saved = localStorage.getItem("breamu_ocean_personality");
+                  if (saved) return JSON.parse(saved);
+                } catch (e) {}
+                return undefined;
+              })();
+              let toneText = "Direct, clean, concise, helpful, and professional.";
+              if (savedOcean) {
+                const personalityBlock = getToneInstruction(savedOcean);
+                if (personalityBlock) {
+                  toneText = personalityBlock;
+                }
+              }
+
+              const sendMsgPrompt = ONLY_EXECUTE_SENDMSG.replace(/\{\{tone\}\}/g, toneText);
+
+              try {
+                const rewritten = await browserEngine.runInference(
+                  category,
+                  textToRewrite,
+                  {
+                    modelId: targetModelId,
+                    temperature: 0.7,
+                    maxTokens: 1024,
+                    systemPrompt: sendMsgPrompt
+                  }
+                );
+                if (rewritten && rewritten.trim()) {
+                  let cleanedRewritten = rewritten
+                    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+                    .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, "")
+                    .trim();
+                  const thinkOpenIdx = cleanedRewritten.toLowerCase().indexOf("<think>");
+                  if (thinkOpenIdx !== -1) {
+                    cleanedRewritten = cleanedRewritten.substring(0, thinkOpenIdx).trim();
+                  }
+                  if (cleanedRewritten) {
+                    textToRewrite = cleanedRewritten;
+                  }
+                }
+              } catch (err) {
+                console.error("Error rewriting message in sendMessage:", err);
+              }
+            }
+
+            outputs[index] = textToRewrite;
+            pendings[index] = false;
+
+            setMessages((prev) =>
+              prev.map((msg) => {
+                if (msg.id === assistantMsgId) {
+                  const items = outputs.map((v, idx) => ({ val: v, pending: pendings[idx] }));
+                  return {
+                    ...msg,
+                    scriptOutput: outputs.join("\n"),
+                    scriptOutputItems: items,
+                  };
+                }
+                return msg;
+              })
+            );
+          };
+
+          const customFetch = async (urlInput: any, options?: any) => {
+            const targetUrl = typeof urlInput === "string" ? urlInput : (urlInput?.url || String(urlInput));
+            try {
+              const scrapeResult = await loadWebviewTextAndResults(targetUrl, false, liveResearchEnabled);
+              const textData = scrapeResult.text || "";
+              return {
+                ok: true,
+                status: 200,
+                statusText: "OK",
+                headers: {
+                  get: (name: string) => name.toLowerCase() === "content-type" ? "text/plain" : null,
+                },
+                text: async () => textData,
+                json: async () => {
+                  try {
+                    return JSON.parse(textData);
+                  } catch (e) {
+                    return { data: textData };
+                  }
+                }
+              };
+            } catch (err: any) {
+              return {
+                ok: false,
+                status: 500,
+                statusText: "Error",
+                text: async () => `[Fetch Scrape Error: ${err.message || err}]`,
+                json: async () => { throw new Error(`[Fetch Scrape Error: ${err.message || err}]`); }
+              };
+            }
+          };
+
+          const regenerateContext = async (contextToRegenerate: any) => {
+            let textToRegen = typeof contextToRegenerate === "string" ? contextToRegenerate : JSON.stringify(contextToRegenerate);
+            if (textToRegen.length > 1024) {
+              textToRegen = textToRegen.substring(0, 1024);
+            }
+            try {
+              const regeneratedResult = await browserEngine.runInference(
+                category,
+                textToRegen,
+                {
+                  modelId: targetModelId,
+                  temperature: 0.7,
+                  maxTokens: 1024,
+                  systemPrompt: ONLY_EXECUTE_REGEN
+                }
+              );
+              return regeneratedResult || "";
+            } catch (err: any) {
+              return `[Regenerate Context Error: ${err.message || err}]`;
+            }
+          };
+
+          (async () => {
+            try {
+              const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+              const runner = new AsyncFunction("sendMessage", "fetch", "regenerateContext", "_systemPrompt", "_userInput", scriptToRun);
+              const _systemPrompt = finalSystemPrompt || "";
+              const _userInput = text || "";
+              await runner(sendMessage, customFetch, regenerateContext, _systemPrompt, _userInput);
+              const finalOut = outputs.length > 0 ? outputs.join("\n") : "[Script finished with no output]";
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.id === assistantMsgId) {
+                    const items = outputs.map((v, idx) => ({ val: v, pending: pendings[idx] }));
+                    return {
+                      ...msg,
+                      scriptOutput: finalOut,
+                      scriptOutputItems: items,
+                    };
+                  }
+                  return msg;
+                })
+              );
+
+              if (enableRAG) {
+                indexMemory(cleanResult, "AI", "Output");
+              }
+            } catch (err: any) {
+              const errMsg = `[Execution Error: ${err.message || err}]`;
+              const finalOut = (outputs.length > 0 ? outputs.join("\n") + "\n" : "") + errMsg;
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.id === assistantMsgId) {
+                    const finalOutputs = [...outputs, errMsg];
+                    const finalPendings = [...pendings, false];
+                    const items = finalOutputs.map((v, idx) => ({ val: v, pending: finalPendings[idx] }));
+                    return {
+                      ...msg,
+                      scriptOutput: finalOut,
+                      scriptOutputItems: items,
+                    };
+                  }
+                  return msg;
+                })
+              );
+
+              if (enableRAG) {
+                indexMemory(cleanResult, "AI", "Output", { tag: "NEGATIVE/BAD RESPONSE" });
+              }
+            }
+          })();
         }
 
         // Parse Sandbox Tools if in Coder mode
@@ -1169,9 +1974,9 @@ ${combinedResearchData}`;
 
         // Automatic memory indexing for completed interactions if active
         if (enableRAG && (category === "text" || category === "coder")) {
-          // Index the user prompt and the generated AI answer asynchronously
+          // Index the user prompt
           indexMemory(text, "User", "Input");
-          if (typeof result === "string" && result) {
+          if (!onlyExecute && typeof result === "string" && result) {
             let cleanResult = result
               .replace(/<think>[\s\S]*?<\/think>/gi, "")
               .trim();
@@ -1191,10 +1996,41 @@ ${combinedResearchData}`;
 
         addLog(`Engine: Task complete.`, "success");
       } catch (err: any) {
+        const errMsg = err?.message || err?.toString() || "";
         addLog(
-          `Engine Error: ${err?.message || err?.toString() || "Unknown error occurred during inference"}`,
+          `Engine Error: ${errMsg || "Unknown error occurred during inference"}`,
           "error",
         );
+
+        // Check for specific fatal engine/WebGPU errors that require model respawning
+        const isFatalEngineError = 
+          errMsg.includes("Engine Total Failure") ||
+          errMsg.includes("OrtRun") ||
+          errMsg.includes("A valid external Instance reference no longer exists") ||
+          errMsg.includes("Failed to download data from buffer") ||
+          errMsg.includes("mapAsync") ||
+          errMsg.includes("GPUBuffer");
+
+        if (isFatalEngineError) {
+          addLog("🚨 Fatal Engine/WebGPU Failure detected! Respawning engine workers...", "error");
+          browserEngine.terminateAllWorkers();
+          
+          setTimeout(() => {
+            const crashMsg = `Your memory has failed and you were unable to complete the users task. You should apologize for the inconvenience and advise not to over share. Here's the error for reference:
+### 🚨 Crash Report
+
+**Error:**
+\`\`\`
+${errMsg}
+\`\`\`
+
+**Active Model:** \`${targetModelId || "Unknown"}\`
+**Context Length (Chars):** \`${text?.length || 0}\``;
+
+            handleSendInternal(crashMsg);
+          }, 1000);
+        }
+
         setMessages((prev) => {
           return prev
             .filter((m) => !m.isThinking)
@@ -1215,6 +2051,9 @@ ${combinedResearchData}`;
             activeModel: targetModelId,
             contextLength: text.length + (finalSystemPrompt?.length || 0),
             rawPrompt: text,
+            systemPromptLength: finalSystemPrompt?.length || 0,
+            promptLength: text.length,
+            totalContextLength: text.length + (finalSystemPrompt?.length || 0),
           });
         }
       } finally {
@@ -1451,6 +2290,9 @@ ${combinedResearchData}`;
                 : selectedModels.director,
             contextLength: job.text.length,
             rawPrompt: job.text,
+            systemPromptLength: finalOptions?.systemPrompt?.length || 0,
+            promptLength: job.text.length,
+            totalContextLength: job.text.length + (finalOptions?.systemPrompt?.length || 0),
           });
         }
         setMessages((prev) =>
@@ -1647,7 +2489,12 @@ ${combinedResearchData}`;
     // Chunk at 80% of maxContext to ensure room for system prompt and generation space
     const chunkLimit = Math.floor(maxContext * 0.8);
 
+    const analyzed = analyzeAndPreprocessPrompt(currentInput, !!currentImage);
+    const preprocessedInput = analyzed.content;
+    const promptFormat = analyzed.format;
+
     const chunks = currentImage ? [currentInput] : chunkText(currentInput, chunkLimit);
+    const preprocessedChunks = currentImage ? [preprocessedInput] : chunkText(preprocessedInput, chunkLimit);
 
     const newMessages: Message[] = [];
     const jobs: any[] = [];
@@ -1691,6 +2538,7 @@ ${combinedResearchData}`;
     }
 
     chunks.forEach((chunkTextItem, index) => {
+      const preprocessedChunkTextItem = preprocessedChunks[index] || chunkTextItem;
       const userMsgId =
         typeof crypto !== "undefined" && crypto.randomUUID
           ? crypto.randomUUID()
@@ -1706,6 +2554,7 @@ ${combinedResearchData}`;
         content: chunkTextItem,
         image: index === 0 && currentImage ? currentImage : undefined,
         timestamp: getFormattedTimestamp(),
+        promptFormat,
       });
       
       newMessages.push({
@@ -1723,10 +2572,21 @@ ${combinedResearchData}`;
             : Math.random().toString(36).substring(2, 11),
         category,
         chatMode,
-        text: index === 0 && currentImage ? currentImage : chunkTextItem,
+        text: index === 0 && currentImage ? currentImage : preprocessedChunkTextItem,
         options: {
-          prompt: index === 0 && currentImage ? chunkTextItem : undefined,
+          prompt: index === 0 && currentImage ? preprocessedChunkTextItem : undefined,
           systemPrompt,
+          vocalParams: chatMode === "music" ? (
+            aceAutoSettings ? { isAuto: true } : {
+              bpm: aceBpm,
+              key: aceKey,
+              registerShift: aceRegisterShift,
+              vibratoSwell: aceVibratoSwell,
+              reverbDelayFeed: aceReverbDelayFeed,
+              vocalStyle: aceVocalStyle,
+              kokoroVoice: aceKokoroVoice
+            }
+          ) : undefined
         },
         userMsgId,
         assistantMsgId,
@@ -1737,7 +2597,7 @@ ${combinedResearchData}`;
 
     setMessages((prev) => [...prev, ...newMessages]);
     jobs.forEach(job => pushJob(job));
-  }, [input, pendingImage, isCoderMode, chatMode, pushJob, selectedModels, activeCategory, currentStepIndex, setCurrentStepIndex]);
+  }, [input, pendingImage, isCoderMode, chatMode, pushJob, selectedModels, activeCategory, currentStepIndex, setCurrentStepIndex, aceBpm, aceKey, aceRegisterShift, aceVibratoSwell, aceReverbDelayFeed, aceVocalStyle, aceKokoroVoice, aceAutoSettings, onAceParamsUpdate]);
 
   const handleSendInternal = useCallback(
     async (

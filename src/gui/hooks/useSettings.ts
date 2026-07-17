@@ -107,6 +107,21 @@ export function useSettings() {
     return saved === "true"; // default to false
   });
 
+  const [enableDualBrain, setEnableDualBrain] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_enable_dual_brain");
+    return saved === "true"; // default to false
+  });
+
+  const [dualBrainMode, setDualBrainMode] = useState<"enhanced-speed" | "double-check">(() => {
+    const saved = localStorage.getItem("omnix_dual_brain_mode");
+    return (saved as "enhanced-speed" | "double-check") || "enhanced-speed";
+  });
+
+  const [enableTurboMode, setEnableTurboMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_enable_turbo");
+    return saved === "true"; // default to false
+  });
+
   const [mmrsModel, setMmrsModel] = useState<"text" | "image" | "music">(() => {
     const saved = localStorage.getItem("omnix_mmrs_model");
     return (saved as "text" | "image" | "music") || "text";
@@ -124,6 +139,57 @@ export function useSettings() {
   const [inactivityTimeout, setInactivityTimeout] = useState<number>(() => {
     const saved = localStorage.getItem("omnix_inactivity_timeout");
     return saved ? parseInt(saved, 10) : 10;
+  });
+
+  const [onlyExecute, setOnlyExecute] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_only_execute");
+    return saved === "true";
+  });
+
+  const [developerView, setDeveloperView] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_developer_view");
+    return saved !== "false";
+  });
+
+  // --- ACE Vocal Synthesizer Parameters ---
+  const [aceBpm, setAceBpm] = useState<number>(() => {
+    const saved = localStorage.getItem("omnix_ace_bpm");
+    return saved ? parseInt(saved, 10) : 120;
+  });
+
+  const [aceKey, setAceKey] = useState<string>(() => {
+    const saved = localStorage.getItem("omnix_ace_key");
+    return saved || "A Minor";
+  });
+
+  const [aceRegisterShift, setAceRegisterShift] = useState<number>(() => {
+    const saved = localStorage.getItem("omnix_ace_register_shift");
+    return saved ? parseFloat(saved) : 1.0;
+  });
+
+  const [aceVibratoSwell, setAceVibratoSwell] = useState<number>(() => {
+    const saved = localStorage.getItem("omnix_ace_vibrato_swell");
+    return saved ? parseFloat(saved) : 1.0;
+  });
+
+  const [aceReverbDelayFeed, setAceReverbDelayFeed] = useState<number>(() => {
+    const saved = localStorage.getItem("omnix_ace_reverb_delay_feed");
+    return saved ? parseFloat(saved) : 0.35;
+  });
+
+  const [aceVocalStyle, setAceVocalStyle] = useState<string>(() => {
+    const saved = localStorage.getItem("omnix_ace_vocal_style");
+    return saved || "synth";
+  });
+
+  const [aceKokoroVoice, setAceKokoroVoice] = useState<string>(() => {
+    const saved = localStorage.getItem("omnix_ace_kokoro_voice");
+    return saved || "af_heart";
+  });
+
+  const [aceAutoSettings, setAceAutoSettings] = useState<boolean>(() => {
+    const saved = localStorage.getItem("omnix_ace_auto_settings");
+    return saved ? saved === "true" : true;
   });
 
   useEffect(() => {
@@ -210,8 +276,28 @@ export function useSettings() {
   }, [enableMMRS]);
 
   useEffect(() => {
+    localStorage.setItem("omnix_enable_dual_brain", enableDualBrain.toString());
+  }, [enableDualBrain]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_dual_brain_mode", dualBrainMode);
+  }, [dualBrainMode]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_enable_turbo", enableTurboMode.toString());
+  }, [enableTurboMode]);
+
+  useEffect(() => {
     localStorage.setItem("omnix_inactivity_timeout", inactivityTimeout.toString());
   }, [inactivityTimeout]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_only_execute", onlyExecute.toString());
+  }, [onlyExecute]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_developer_view", developerView.toString());
+  }, [developerView]);
 
   useEffect(() => {
     localStorage.setItem("omnix_mmrs_model", mmrsModel);
@@ -248,6 +334,38 @@ export function useSettings() {
       document.documentElement.classList.remove("dark");
     }
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_ace_bpm", aceBpm.toString());
+  }, [aceBpm]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_ace_key", aceKey);
+  }, [aceKey]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_ace_register_shift", aceRegisterShift.toString());
+  }, [aceRegisterShift]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_ace_vibrato_swell", aceVibratoSwell.toString());
+  }, [aceVibratoSwell]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_ace_reverb_delay_feed", aceReverbDelayFeed.toString());
+  }, [aceReverbDelayFeed]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_ace_vocal_style", aceVocalStyle);
+  }, [aceVocalStyle]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_ace_kokoro_voice", aceKokoroVoice);
+  }, [aceKokoroVoice]);
+
+  useEffect(() => {
+    localStorage.setItem("omnix_ace_auto_settings", aceAutoSettings.toString());
+  }, [aceAutoSettings]);
 
   return {
     ramLimitPercent,
@@ -290,6 +408,12 @@ export function useSettings() {
     setResearchSrc,
     enableMMRS,
     setEnableMMRS,
+    enableDualBrain,
+    setEnableDualBrain,
+    dualBrainMode,
+    setDualBrainMode,
+    enableTurboMode,
+    setEnableTurboMode,
     mmrsModel,
     setMmrsModel,
     mmrsMode,
@@ -298,5 +422,25 @@ export function useSettings() {
     setPreviousTextModel,
     inactivityTimeout,
     setInactivityTimeout,
+    onlyExecute,
+    setOnlyExecute,
+    developerView,
+    setDeveloperView,
+    aceBpm,
+    setAceBpm,
+    aceKey,
+    setAceKey,
+    aceRegisterShift,
+    setAceRegisterShift,
+    aceVibratoSwell,
+    setAceVibratoSwell,
+    aceReverbDelayFeed,
+    setAceReverbDelayFeed,
+    aceVocalStyle,
+    setAceVocalStyle,
+    aceKokoroVoice,
+    setAceKokoroVoice,
+    aceAutoSettings,
+    setAceAutoSettings,
   };
 }

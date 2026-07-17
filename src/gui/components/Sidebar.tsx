@@ -1,5 +1,5 @@
-import { Cpu, Settings2, Download, Loader2, Activity, Database, Bot, History, Maximize2, Volume2, FolderOpen, Zap, Workflow, CheckCircle2, PlayCircle, Circle } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { Cpu, Settings2, Download, Loader2, Activity, Database, Bot, History, Maximize2, FolderOpen, Zap, Workflow, CheckCircle2, PlayCircle, Circle } from "lucide-react";
+import { motion } from "motion/react";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -7,8 +7,10 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { MODELS, getRequiredRamForModel, getBestFittingQtype } from "@shared/modelList";
 import { tts as ttsEngine } from "@/lib/tts";
-import type { RefObject } from "react";
+import { useState, type RefObject } from "react";
 import { useApp } from "@/context/AppContext";
+import { BenchmarkDialog } from "./SidebarFuncs/BenchmarkDialog";
+import { LogWatcherSection } from "./SidebarFuncs/LogWatcherSection";
 
 interface SidebarProps {
   loadModel: (cat: string) => void;
@@ -19,6 +21,7 @@ export function Sidebar({
   loadModel,
   logEndRef
 }: SidebarProps) {
+  const [textBenchmarkDialogOpen, setTextBenchmarkDialogOpen] = useState(false);
   const {
     heapUsage,
     selectedModels,
@@ -38,19 +41,18 @@ export function Sidebar({
     setTopK,
     inactivityTimeout,
     setInactivityTimeout,
+    onlyExecute,
+    setOnlyExecute,
+    developerView,
+    setDeveloperView,
     enableRAG,
     setEnableRAG,
     speakEnabled,
     setSpeakEnabled,
-    liveModeTimer,
-    setLiveModeTimer,
-    longTermMemories,
     logs,
     showLogs,
     setShowLogs,
     isElectron,
-    minimizeToTray,
-    setMinimizeToTray,
     isCoderMode,
     enableRelayMode,
     setEnableRelayMode,
@@ -81,8 +83,28 @@ export function Sidebar({
     setSafeMode,
     enableMMRS,
     setEnableMMRS,
+    enableDualBrain,
+    setEnableDualBrain,
+    dualBrainMode,
+    setDualBrainMode,
+    enableTurboMode,
+    setEnableTurboMode,
     selectedQtypes,
-    setSelectedQtypes
+    setSelectedQtypes,
+    aceBpm,
+    setAceBpm,
+    aceKey,
+    setAceKey,
+    aceRegisterShift,
+    setAceRegisterShift,
+    aceVibratoSwell,
+    setAceVibratoSwell,
+    aceReverbDelayFeed,
+    setAceReverbDelayFeed,
+    aceVocalStyle,
+    setAceVocalStyle,
+    aceKokoroVoice,
+    setAceKokoroVoice,
   } = useApp();
 
   const filteredModels = MODELS;
@@ -91,7 +113,6 @@ export function Sidebar({
     if (isElectron && (window as any).electron) {
       const result = await (window as any).electron.dialog.openFile();
       if (!result.canceled && result.filePaths.length > 0) {
-        // You could do something with the file paths here
         console.log("Selected files:", result.filePaths);
       }
     }
@@ -160,7 +181,6 @@ export function Sidebar({
               {workflow.map((step, idx) => {
                 const isFinished = idx < currentStepIndex;
                 const isActive = idx === currentStepIndex;
-                const isPending = idx > currentStepIndex;
                 
                 return (
                   <div 
@@ -207,7 +227,7 @@ export function Sidebar({
           </div>
           
           <div className="grid gap-1.5 px-0.5">
-            {["text", "vision", "stt", "tts", "image-gen", "music-gen", "director", "coder"].map((cat) => {
+            {["live", "text", "vision", "stt", "tts", "image-gen", "music-gen", "director", "coder"].map((cat) => {
               const modelsInCategory = filteredModels.filter(m => m.category === cat);
               const showDropdown = modelsInCategory.length > 1;
               const isActive = activeCategory === cat;
@@ -220,7 +240,20 @@ export function Sidebar({
                   </div>
                   
                   <div className="flex gap-2">
-                    {showDropdown ? (
+                    {cat === "text" ? (
+                      <BenchmarkDialog
+                        open={textBenchmarkDialogOpen}
+                        onOpenChange={setTextBenchmarkDialogOpen}
+                        modelsInCategory={modelsInCategory}
+                        selectedModels={selectedModels}
+                        setSelectedModels={setSelectedModels}
+                        selectedQtypes={selectedQtypes}
+                        setSelectedQtypes={setSelectedQtypes}
+                        systemRam={systemRam}
+                        isModelLoading={isModelLoading}
+                        cat={cat}
+                      />
+                    ) : showDropdown ? (
                       <Select 
                         value={selectedModels[cat]} 
                         onValueChange={(val) => {
@@ -319,7 +352,14 @@ export function Sidebar({
                                     className="text-[9px] focus:bg-orange-500/10 focus:text-orange-500"
                                     disabled={isOverRam}
                                   >
-                                    <span>{q === "q4f16" ? "Q4 (FP16)" : q === "q4" ? "Q4 (FP32)" : q.toUpperCase()}</span>
+                                    <span>{
+                                      q === "q4f16" ? "Q4 (FP16)" : 
+                                      q === "q4" ? "Q4 (4-bit Standard)" : 
+                                      q === "q4v2" ? "Q4v2 (4-bit Optimized)" :
+                                      q === "fp16" ? "FP16 (16-bit Precision)" :
+                                      q === "fp16_v2" ? "FP16v2 (16-bit Enhanced)" :
+                                      q.toUpperCase()
+                                    }</span>
                                     {isOverRam && <span className="text-[7.5px] text-muted-foreground/60 ml-1 font-bold">(Requires ~{Math.ceil(reqRam)}GB)</span>}
                                   </SelectItem>
                                 );
@@ -340,6 +380,188 @@ export function Sidebar({
                       <div className="flex justify-between text-[7px] font-mono uppercase opacity-50">
                         <span>Loading_Assets_...</span>
                         <span>{Math.round(Object.values(loadingProgress).reduce((acc, curr) => acc + (curr.progress || 0), 0) / Object.values(loadingProgress).length)}%</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {cat === "music-gen" && (
+                    <div className="mt-4 border-t border-border/10 pt-4 space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                      <div className="flex items-center gap-1.5 text-muted-foreground/60 mb-1">
+                        <Cpu className="w-3 h-3 text-orange-500/80" />
+                        <span className="text-[8px] font-bold uppercase tracking-[0.15em] font-mono text-orange-500/80">
+                          ACE Vocal Synthesizer
+                        </span>
+                      </div>
+
+                      {/* Tempo/BPM */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-[8px] font-mono uppercase text-muted-foreground/70">
+                          <span>Tempo (BPM)</span>
+                          <span className="text-orange-500 font-bold">{aceBpm} BPM</span>
+                        </div>
+                        <Slider
+                          value={[aceBpm]}
+                          onValueChange={(val) => setAceBpm(val[0])}
+                          max={180}
+                          min={60}
+                          step={1}
+                          className="py-1"
+                        />
+                      </div>
+
+                      {/* Musical Key / Scale */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-[8px] font-mono uppercase text-muted-foreground/70">
+                          <span>Musical Key</span>
+                          <span className="text-orange-500 font-bold">{aceKey}</span>
+                        </div>
+                        <Select
+                          value={aceKey}
+                          onValueChange={(val) => setAceKey(val as string)}
+                        >
+                          <SelectTrigger className="h-6 w-full bg-muted/40 dark:bg-black/10 border-border/40 text-[9px] text-foreground font-mono rounded-none">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-popover border border-border/50 text-popover-foreground text-[9px] font-mono shadow-md">
+                            {[
+                              "A Minor",
+                              "E Minor",
+                              "D Minor",
+                              "C Major",
+                              "G Major",
+                              "F Major",
+                              "B Minor"
+                            ].map((k) => (
+                              <SelectItem
+                                key={k}
+                                value={k}
+                                className="text-[9px] focus:bg-orange-500/10 focus:text-orange-500"
+                              >
+                                {k}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Vocal Synthesis Style */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-[8px] font-mono uppercase text-muted-foreground/70">
+                          <span>Vocal Style</span>
+                          <span className="text-orange-500 font-bold">
+                            {aceVocalStyle === "kokoro" ? "Neural TTS" : "Procedural Synth"}
+                          </span>
+                        </div>
+                        <Select
+                          value={aceVocalStyle}
+                          onValueChange={(val) => setAceVocalStyle(val as string)}
+                        >
+                          <SelectTrigger className="h-6 w-full bg-muted/40 dark:bg-black/10 border-border/40 text-[9px] text-foreground font-mono rounded-none">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-popover border border-border/50 text-popover-foreground text-[9px] font-mono shadow-md">
+                            <SelectItem value="synth" className="text-[9px] focus:bg-orange-500/10 focus:text-orange-500">
+                              Procedural Synth
+                            </SelectItem>
+                            <SelectItem value="kokoro" className="text-[9px] focus:bg-orange-500/10 focus:text-orange-500">
+                              Neural TTS (Kokoro)
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Neural TTS Voice (Only shown/enabled when kokoro style selected) */}
+                      {aceVocalStyle === "kokoro" && (
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-[8px] font-mono uppercase text-muted-foreground/70">
+                            <span>Neural Voice</span>
+                            <span className="text-orange-500 font-bold">
+                              {aceKokoroVoice.replace("af_", "Female: ").replace("am_", "Male: ")}
+                            </span>
+                          </div>
+                          <Select
+                            value={aceKokoroVoice}
+                            onValueChange={(val) => setAceKokoroVoice(val as string)}
+                          >
+                            <SelectTrigger className="h-6 w-full bg-muted/40 dark:bg-black/10 border-border/40 text-[9px] text-foreground font-mono rounded-none">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-popover border border-border/50 text-popover-foreground text-[9px] font-mono shadow-md">
+                              {[
+                                { label: "Heart (F)", value: "af_heart" },
+                                { label: "Bella (F)", value: "af_bella" },
+                                { label: "Nicole (F)", value: "af_nicole" },
+                                { label: "Sarah (F)", value: "af_sarah" },
+                                { label: "Sky (F)", value: "af_sky" },
+                                { label: "Adam (M)", value: "am_adam" },
+                                { label: "Michael (M)", value: "am_michael" }
+                              ].map((v) => (
+                                <SelectItem
+                                  key={v.value}
+                                  value={v.value}
+                                  className="text-[9px] focus:bg-orange-500/10 focus:text-orange-500"
+                                >
+                                  {v.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {/* Register Shift */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-[8px] font-mono uppercase text-muted-foreground/70">
+                          <span>Register Shift</span>
+                          <span className="text-orange-500 font-bold">
+                            {aceRegisterShift.toFixed(2)}x ({
+                              aceRegisterShift < 0.85 ? "Deep Bass" :
+                              aceRegisterShift < 1.0 ? "Tenor" :
+                              aceRegisterShift < 1.25 ? "Alto" :
+                              "Soprano Girl"
+                            })
+                          </span>
+                        </div>
+                        <Slider
+                          value={[aceRegisterShift]}
+                          onValueChange={(val) => setAceRegisterShift(val[0])}
+                          max={2.0}
+                          min={0.5}
+                          step={0.02}
+                          className="py-1"
+                        />
+                      </div>
+
+                      {/* Vibrato Swell */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-[8px] font-mono uppercase text-muted-foreground/70">
+                          <span>Vibrato Swell</span>
+                          <span className="text-orange-500 font-bold">{Math.round(aceVibratoSwell * 100)}%</span>
+                        </div>
+                        <Slider
+                          value={[aceVibratoSwell]}
+                          onValueChange={(val) => setAceVibratoSwell(val[0])}
+                          max={2.0}
+                          min={0.0}
+                          step={0.1}
+                          className="py-1"
+                        />
+                      </div>
+
+                      {/* Reverb Delay Feed */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-[8px] font-mono uppercase text-muted-foreground/70">
+                          <span>Reverb / Delay Feed</span>
+                          <span className="text-orange-500 font-bold">{Math.round(aceReverbDelayFeed * 100)}%</span>
+                        </div>
+                        <Slider
+                          value={[aceReverbDelayFeed]}
+                          onValueChange={(val) => setAceReverbDelayFeed(val[0])}
+                          max={0.8}
+                          min={0.0}
+                          step={0.05}
+                          className="py-1"
+                        />
                       </div>
                     </div>
                   )}
@@ -366,81 +588,81 @@ export function Sidebar({
           </div>
           <div className="px-4 py-3 rounded-sm bg-zinc-900 border border-border/40 space-y-3">
              {isElectron ? (
-               <div className="space-y-3">
-                 <div className="flex items-start gap-3">
-                   <div className={`w-1.5 h-1.5 rounded-full mt-1.5 ${isApiServerActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-                   <div className="space-y-1 flex-1">
-                     <p className="text-[10px] font-mono text-zinc-300">
-                       {isApiServerActive ? 'Local API Server Active' : 'Local API Server Offline'}
-                     </p>
-                     <p className="text-[8px] font-mono text-muted-foreground leading-snug">
-                       {isApiServerActive 
-                         ? `API services are listening on Port ${isElectron && (window as any).electron?.server?.getPort ? (window as any).electron.server.getPort() : '9777'} to receive and route requests from external applications.` 
-                         : "The Express API server is stopped. Click below to launch to receive processing requests."}
-                     </p>
-                   </div>
-                 </div>
-                 
-                 <div className="flex gap-2 pt-1 border-t border-white/5">
-                   {isApiServerActive ? (
-                     <>
-                       <button 
-                         onClick={shutdownApiServer}
-                         className="flex-1 py-1 text-center bg-red-950/40 hover:bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-mono rounded transition-all cursor-pointer font-bold uppercase tracking-wider"
-                       >
-                         Stop API Server
-                       </button>
-                       {!relayActive && (
-                         <button 
-                           onClick={startRelayServer}
-                           className="flex-1 py-1 text-center bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-yellow-400 text-[10px] font-mono rounded transition-all cursor-pointer font-bold uppercase tracking-wider animate-pulse"
-                         >
-                           Start Relay
-                         </button>
-                       )}
-                     </>
-                   ) : (
-                     <button 
-                       onClick={launchApiServer}
-                       className="w-full py-1.5 text-center bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 text-green-400 text-[10px] font-mono rounded transition-all cursor-pointer font-bold uppercase tracking-widest"
-                     >
-                       Launch API Server
-                     </button>
-                   )}
-                 </div>
+                <div className="space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className={`w-1.5 h-1.5 rounded-full mt-1.5 ${isApiServerActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                    <div className="space-y-1 flex-1">
+                      <p className="text-[10px] font-mono text-zinc-300">
+                        {isApiServerActive ? 'Local API Server Active' : 'Local API Server Offline'}
+                      </p>
+                      <p className="text-[8px] font-mono text-muted-foreground leading-snug">
+                        {isApiServerActive 
+                          ? `API services are listening on Port ${isElectron && (window as any).electron?.server?.getPort ? (window as any).electron.server.getPort() : '9777'} to receive and route requests from external applications.` 
+                          : "The Express API server is stopped. Click below to launch to receive processing requests."}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-2 pt-1 border-t border-white/5">
+                    {isApiServerActive ? (
+                      <>
+                        <button 
+                          onClick={shutdownApiServer}
+                          className="flex-1 py-1 text-center bg-red-950/40 hover:bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-mono rounded transition-all cursor-pointer font-bold uppercase tracking-wider"
+                        >
+                          Stop API Server
+                        </button>
+                        {!relayActive && (
+                          <button 
+                            onClick={startRelayServer}
+                            className="flex-1 py-1 text-center bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-yellow-400 text-[10px] font-mono rounded transition-all cursor-pointer font-bold uppercase tracking-wider animate-pulse"
+                          >
+                            Start Relay
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <button 
+                        onClick={launchApiServer}
+                        className="w-full py-1.5 text-center bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 text-green-400 text-[10px] font-mono rounded transition-all cursor-pointer font-bold uppercase tracking-widest"
+                      >
+                        Launch API Server
+                      </button>
+                    )}
+                  </div>
 
-                 <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[8px] font-mono">
-                    <span className="text-muted-foreground/80">SERVER_ROLE</span>
-                    <span className={`${relayActive ? 'text-amber-400 font-bold' : 'text-zinc-500'}`}>
-                      {relayActive ? 'MAIN_DESKTOP_PROCESSOR' : 'STANDALONE_LOCAL_NODE'}
-                    </span>
-                 </div>
-               </div>
-             ) : (
-               <>
-                 <div className="flex items-start gap-3">
-                   <div className={`w-1.5 h-1.5 rounded-full mt-1 ${relayActive ? 'bg-green-500 animate-pulse' : 'bg-zinc-600'}`} />
-                   <div className="space-y-1">
-                     <p className="text-[10px] font-mono text-zinc-300">
-                       {relayActive ? (isElectron ? 'Main Desktop Processor Active' : 'Local Relay Active') : 'Relay Mode Disabled'}
-                     </p>
-                     <p className="text-[8px] font-mono text-muted-foreground leading-tight">
-                       {relayActive 
-                         ? (isElectron 
-                            ? "Running as primary relay. Your desktop is now a gateway for other instances."
-                            : "This instance is sharing compute with the network. Other apps can send tasks to your browser.")
-                         : "Processors are locked to this application only. No external task sharing is active."}
-                     </p>
-                   </div>
-                 </div>
-                 <div className="flex items-center justify-between pt-1 border-t border-white/5">
-                    <span className="text-[8px] font-mono text-muted-foreground">ENGINE_ROLE</span>
-                    <span className={`text-[8px] font-mono ${relayActive ? (isElectron ? 'text-amber-400' : 'text-blue-400') : 'text-zinc-500'}`}>
-                      {relayActive ? (isElectron ? 'MAIN_DESKTOP_PROCESSOR' : 'PRIMARY_COMPUTE_NODE') : 'LOCAL_ONLY'}
-                    </span>
-                 </div>
-               </>
-             )}
+                  <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[8px] font-mono">
+                     <span className="text-muted-foreground/80">SERVER_ROLE</span>
+                     <span className={`${relayActive ? 'text-amber-400 font-bold' : 'text-zinc-500'}`}>
+                       {relayActive ? 'MAIN_DESKTOP_PROCESSOR' : 'STANDALONE_LOCAL_NODE'}
+                     </span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-start gap-3">
+                    <div className={`w-1.5 h-1.5 rounded-full mt-1 ${relayActive ? 'bg-green-500 animate-pulse' : 'bg-zinc-600'}`} />
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-mono text-zinc-300">
+                        {relayActive ? (isElectron ? 'Main Desktop Processor Active' : 'Local Relay Active') : 'Relay Mode Disabled'}
+                      </p>
+                      <p className="text-[8px] font-mono text-muted-foreground leading-tight">
+                        {relayActive 
+                          ? (isElectron 
+                             ? "Running as primary relay. Your desktop is now a gateway for other instances."
+                             : "This instance is sharing compute with the network. Other apps can send tasks to your browser.")
+                          : "Processors are locked to this application only. No external task sharing is active."}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                     <span className="text-[8px] font-mono text-muted-foreground">ENGINE_ROLE</span>
+                     <span className={`text-[8px] font-mono ${relayActive ? (isElectron ? 'text-amber-400' : 'text-blue-400') : 'text-zinc-500'}`}>
+                       {relayActive ? (isElectron ? 'MAIN_DESKTOP_PROCESSOR' : 'PRIMARY_COMPUTE_NODE') : 'LOCAL_ONLY'}
+                     </span>
+                  </div>
+                </>
+              )}
           </div>
         </section>
 
@@ -593,6 +815,34 @@ export function Sidebar({
                 />
               </div>
               <div className="space-y-2">
+                <span className="text-[8px] font-mono text-muted-foreground/50 uppercase font-bold text-teal-400" title="Load the same model onto two separate workers for parallel speed or consensus">DUAL_BRAIN</span>
+                <div className="flex items-center gap-1.5 min-h-[28px]">
+                  <Switch 
+                    checked={enableDualBrain} 
+                    onCheckedChange={setEnableDualBrain}
+                    className="scale-75 data-[state=checked]:bg-teal-600 ml-[-4px]"
+                  />
+                  {enableDualBrain && (
+                    <select
+                      value={dualBrainMode}
+                      onChange={(e) => setDualBrainMode(e.target.value as "enhanced-speed" | "double-check")}
+                      className="text-[9px] bg-background border border-border/50 rounded px-1 py-0.5 text-muted-foreground font-mono focus:outline-none focus:border-teal-500 max-w-[65px]"
+                    >
+                      <option value="enhanced-speed">SPEED</option>
+                      <option value="double-check">CHECK</option>
+                    </select>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <span className="text-[8px] font-mono text-muted-foreground/50 uppercase font-bold text-red-400" title="Full RAM access with native onnxruntime-node">TURBO_MODE (EXP)</span>
+                <Switch 
+                  checked={enableTurboMode} 
+                  onCheckedChange={setEnableTurboMode}
+                  className="scale-75 data-[state=checked]:bg-red-600 ml-[-4px]"
+                />
+              </div>
+              <div className="space-y-2">
                 <span className="text-[8px] font-mono text-muted-foreground/50 uppercase">RELAY_BRIDGE</span>
                 <Switch 
                   checked={enableRelayMode} 
@@ -619,6 +869,25 @@ export function Sidebar({
                   className="scale-75 data-[state=checked]:bg-orange-600 ml-[-4px]"
                 />
               </div>
+              <div className="space-y-2">
+                <span className="text-[8px] font-mono text-muted-foreground/50 uppercase">ONLY_EXEC</span>
+                <Switch 
+                  checked={onlyExecute} 
+                  onCheckedChange={setOnlyExecute}
+                  className="scale-75 data-[state=checked]:bg-purple-600 ml-[-4px]"
+                  title="Enable 'Only Execute' mode: Every output is written as a JavaScript script and executed on completion."
+                />
+              </div>
+              {onlyExecute && (
+                <div className="space-y-2">
+                  <span className="text-[8px] font-mono text-purple-400 font-bold uppercase" title="Toggle Developer View: When disabled, only the results of sendMessage() are shown in the UI.">DEV_VIEW</span>
+                  <Switch 
+                    checked={developerView} 
+                    onCheckedChange={setDeveloperView}
+                    className="scale-75 data-[state=checked]:bg-purple-600 ml-[-4px]"
+                  />
+                </div>
+              )}
               <div className="space-y-2">
                 <span className="text-[8px] font-mono text-muted-foreground/50 uppercase">RESEARCH</span>
                 <Switch 
@@ -671,28 +940,8 @@ export function Sidebar({
           </div>
         </section>
 
-        {/* Live Logs */}
-        <section className="space-y-4 pt-2 pb-10">
-          <div className="flex items-center justify-between text-muted-foreground/60 px-1">
-            <div className="flex items-center gap-2">
-              <History className="w-3 h-3" />
-              <span className="text-[9px] font-bold uppercase tracking-[0.2em] font-mono italic">OPERATOR_LOGS</span>
-            </div>
-            <Button variant="ghost" size="icon" className="h-4 w-4 hover:text-orange-500" onClick={() => setShowLogs(!showLogs)}>
-              <Maximize2 className="w-2.5 h-2.5" />
-            </Button>
-          </div>
-          <div className="h-48 bg-zinc-950 border border-border/50 rounded-sm p-3 font-mono text-[9px] overflow-y-auto space-y-1.5 selection:bg-orange-500/40 relative">
-            <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.02),rgba(0,255,0,0.01),rgba(0,0,255,0.02))] bg-[length:100%_4px,3px_100%] opacity-20" />
-            {logs.map((log, i) => (
-              <div key={i} className={`flex gap-2 relative ${log.type === 'error' ? 'text-red-500' : log.type === 'success' ? 'text-green-500' : 'text-orange-500/80'}`}>
-                <span className="opacity-40 shrink-0 font-bold">[{log.timestamp}]</span>
-                <span className="break-all opacity-90">{log.message}</span>
-              </div>
-            ))}
-            <div ref={logEndRef} />
-          </div>
-        </section>
+        {/* Log Watcher */}
+        <LogWatcherSection />
       </div>
     </aside>
   );

@@ -47,7 +47,24 @@ export function ErrorOverlay({
 
   const handleCopyReport = () => {
     if (!error) return;
-    const md = `### 🚨 Crash Report\n\n**Error:**\n\`\`\`\n${error.message}\n\`\`\`\n\n**Active Model:** \`${error.activeModel || "Unknown"}\`\n**Context Length (Chars):** \`${error.contextLength || 0}\`\n\n**Raw Prompt:**\n\`\`\`\n${error.rawPrompt || "N/A"}\n\`\`\``;
+    const md = `### 🚨 Crash Report
+
+**Error:**
+\`\`\`
+${error.message}
+\`\`\`
+
+**Active Model:** \`${error.activeModel || "Unknown"}\`
+**Memory @ Time of Error:** \`${error.memoryAtError || "N/A"}\`
+**Stack Heap @ Time of Error:** \`${error.stackHeapAtError || "N/A"}\`
+**System Prompt Context Length:** \`${error.systemPromptLength !== undefined ? `${error.systemPromptLength} chars (~${Math.round(error.systemPromptLength / 4)} tokens)` : "N/A"}\`
+**Prompt Context Length:** \`${error.promptLength !== undefined ? `${error.promptLength} chars (~${Math.round(error.promptLength / 4)} tokens)` : "N/A"}\`
+**Total Context Length:** \`${error.totalContextLength !== undefined ? `${error.totalContextLength} chars (~${Math.round(error.totalContextLength / 4)} tokens)` : "N/A"}\`
+
+**Raw Prompt:**
+\`\`\`
+${error.rawPrompt || "N/A"}
+\`\`\``;
     navigator.clipboard.writeText(md);
   };
 
@@ -68,9 +85,43 @@ export function ErrorOverlay({
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4 pt-0 text-[10px] font-mono opacity-80 leading-relaxed break-all">
-              <div className="mb-2">
-                <span className="font-bold text-red-300">Model:</span> {error.activeModel || "Unknown"} <br/>
-                <span className="font-bold text-red-300">Context:</span> {error.contextLength || 0} chars
+              <div className="mb-3 grid grid-cols-2 gap-x-4 gap-y-1.5 bg-red-900/20 p-2.5 rounded border border-red-500/10 text-[9px]">
+                <div>
+                  <span className="font-semibold text-red-400">Model:</span>{" "}
+                  <span className="text-red-200">{error.activeModel || "Unknown"}</span>
+                </div>
+                <div>
+                  <span className="font-semibold text-red-400">Memory @ Error:</span>{" "}
+                  <span className="text-red-200">{error.memoryAtError || "N/A"}</span>
+                </div>
+                <div>
+                  <span className="font-semibold text-red-400">Stack Heap @ Error:</span>{" "}
+                  <span className="text-red-200">{error.stackHeapAtError || "N/A"}</span>
+                </div>
+                <div>
+                  <span className="font-semibold text-red-400">Sys Prompt Len:</span>{" "}
+                  <span className="text-red-200">
+                    {error.systemPromptLength !== undefined
+                      ? `${error.systemPromptLength} ch (~${Math.round(error.systemPromptLength / 4)} t)`
+                      : "N/A"}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-semibold text-red-400">Prompt Len:</span>{" "}
+                  <span className="text-red-200">
+                    {error.promptLength !== undefined
+                      ? `${error.promptLength} ch (~${Math.round(error.promptLength / 4)} t)`
+                      : "N/A"}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-semibold text-red-400">Total Context:</span>{" "}
+                  <span className="text-red-200">
+                    {error.totalContextLength !== undefined
+                      ? `${error.totalContextLength} ch (~${Math.round(error.totalContextLength / 4)} t)`
+                      : "N/A"}
+                  </span>
+                </div>
               </div>
               <div className="p-2 bg-red-900/30 rounded border border-red-500/20 max-h-32 overflow-y-auto custom-scrollbar">
                 {errorMessage}

@@ -11,7 +11,7 @@ interface PendingAuth {
 }
 
 const pendingAuths = new Map<string, PendingAuth>();
-const reqIdChatHistories = new Map<string, Array<{ role: "system" | "user" | "assistant"; content: string }>>();
+export const reqIdChatHistories = new Map<string, Array<{ role: "system" | "user" | "assistant"; content: string }>>();
 const allowedOnceGrace = new Set<string>();
 
 const PERMISSIONS_FILE = path.join(process.cwd(), "permissions.json");
@@ -642,3 +642,76 @@ export async function handleHealthCheck(origin: string, isLocalHost?: boolean): 
 
   return { allowed: true };
 }
+
+export function abortAllTasksAndUnloadWorkers() {
+  console.log("🛑 [API] Initiating Abort All Tasks & Unload/Respawn Workers...");
+
+  // 1. Clear and reject all tasks in taskQueue
+  const abortedCountQueue = taskQueue.length;
+  while (taskQueue.length > 0) {
+    const task = taskQueue.shift();
+    if (task && task.reject) {
+      try {
+        task.reject(new Error("Request aborted by server-wide /api/abort."));
+      } catch (err) {
+        console.error("Error rejecting task in queue:", err);
+      }
+    }
+  }
+
+  // 2. Clear and reject all pendingTasks
+  const abortedCountPending = pendingTasks.size;
+  pendingTasks.forEach((task, id) => {
+    if (task.timeout) {
+      clearTimeout(task.timeout);
+    }
+    // Try to notify the worker if they are still connected
+    const worker = workers.find(w => w.id === task.workerId);
+    if (worker && worker.ws && worker.ws.readyState === 1) {
+      try {
+        worker.ws.send(JSON.stringify({ type: "CANCEL_TASK", requestId: id }));
+      } catch (err) {
+        console.error(`Failed to send CANCEL_TASK for ${id} to worker:`, err);
+      }
+    }
+    if (task.reject) {
+      try {
+        task.reject(new Error("Request aborted by server-wide /api/abort."));
+      } catch (err) {
+        console.error("Error rejecting pending task:", err);
+      }
+    }
+  });
+  pendingTasks.clear();
+
+  console.log(`🧹 Cleared ${abortedCountQueue} queued tasks and ${abortedCountPending} active running tasks.`);
+
+  // 3. Unload and disconnect all workers
+  const currentWorkers = [...workers];
+  workers = []; // Clear server-side worker registry
+
+  currentWorkers.forEach(w => {
+    if (w.ws && w.ws.readyState === 1) {
+      try {
+        // Send abort/unload command to the worker so they terminate their models and reconnect
+        w.ws.send(JSON.stringify({ type: "ABORT_AND_RESPAWN" }));
+        // Terminate / Close WebSocket connection
+        w.ws.terminate();
+      } catch (err) {
+        console.error(`Error terminating worker websocket:`, err);
+      }
+    }
+  });
+
+  console.log(`🔌 Disconnected and sent ABORT_AND_RESPAWN to ${currentWorkers.length} workers.`);
+
+  // 4. Request Electron to spawn fresh compute node if applicable
+  if (process.send) {
+    console.log("🛠️ Spawning fresh compute worker via Electron process channel...");
+    process.send({ type: "SPAWN_WORKER" });
+  }
+
+  // Broadcast updated network stats (workerCount will be 0)
+  broadcastNetworkStats(globalWss);
+}
+

@@ -1,20 +1,22 @@
 import React, { useState, useEffect } from "react";
-import { 
-  Brain, Heart, RefreshCw, Trash2, Plus, Sparkles, Clock, 
-  Zap, Compass, PlusCircle, Check, Search, Trash, Database
-} from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { Heart, Database } from "lucide-react";
 import { useApp } from "../context/AppContext";
-import { memoryStore, MemoryEntry } from "../lib/memory";
+import { memoryStore, MemoryEntry, chunkBySentences, classifyChunk } from "../lib/memory";
 import { browserEngine } from "../lib/ModelEngine";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Slider } from "@/components/ui/slider";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getToneDescriptor } from "@shared/prompts";
+import { StateTab } from "./MemoryDashboardFuncs/StateTab";
+import { FactualTab } from "./MemoryDashboardFuncs/FactualTab";
 
 export function MemoryDashboard() {
-  const { messages, addLog, emotionalState, setEmotionalState, focusTopics, enableFocusTopics, contextMemoryLimit, setContextMemoryLimit } = useApp();
+  const {
+    messages,
+    addLog,
+    emotionalState,
+    setEmotionalState,
+    focusTopics,
+    enableFocusTopics,
+    contextMemoryLimit,
+    setContextMemoryLimit
+  } = useApp();
 
   // --- Persistent Inner State ---
   const [socialBattery, setSocialBattery] = useState<number>(() => {
@@ -30,7 +32,9 @@ export function MemoryDashboard() {
   const [ocean, setOcean] = useState(() => {
     const saved = localStorage.getItem("breamu_ocean_personality");
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
     }
     return {
       openness: 75,
@@ -55,7 +59,7 @@ export function MemoryDashboard() {
   const [isAddingFactual, setIsAddingFactual] = useState(false);
 
   // Active sub-dashboard tab
-  const [activeTab, setActiveTab ] = useState<"state" | "factual">("state");
+  const [activeTab, setActiveTab] = useState<"state" | "factual">("state");
 
   // --- Memory Bank Selection & Isolation ---
   const [selectedReqId, setSelectedReqId] = useState<string>("default");
@@ -63,7 +67,7 @@ export function MemoryDashboard() {
   // Find all unique reqIds/isolatedRAG that exist in stored vector memories
   const availableReqIds = React.useMemo(() => {
     const ids = new Set<string>();
-    vectorMemories.forEach(entry => {
+    vectorMemories.forEach((entry) => {
       const ragId = entry.metadata?.isolatedRAG;
       if (ragId && typeof ragId === "string" && ragId.trim() !== "") {
         ids.add(ragId);
@@ -76,7 +80,7 @@ export function MemoryDashboard() {
   const reqIdCounts = React.useMemo(() => {
     const counts: Record<string, number> = {};
     let defaultCount = 0;
-    vectorMemories.forEach(entry => {
+    vectorMemories.forEach((entry) => {
       const ragId = entry.metadata?.isolatedRAG;
       if (ragId && typeof ragId === "string" && ragId.trim() !== "") {
         counts[ragId] = (counts[ragId] || 0) + 1;
@@ -89,7 +93,7 @@ export function MemoryDashboard() {
 
   // Filter memories to display based on selected bank
   const filteredMemories = React.useMemo(() => {
-    return vectorMemories.filter(entry => {
+    return vectorMemories.filter((entry) => {
       const entryRag = entry.metadata?.isolatedRAG;
       if (selectedReqId === "default") {
         return !entryRag;
@@ -128,7 +132,7 @@ export function MemoryDashboard() {
       const records = await (memoryStore as any).getAll();
       setVectorMemories(records || []);
     } catch (e) {
-      console.warn("Could not loaded memories:", e);
+      console.warn("Could not load memories:", e);
     }
   };
 
@@ -148,28 +152,37 @@ export function MemoryDashboard() {
   const commitFactualMemory = async () => {
     if (!newFactualMemory.trim()) return;
     setIsAddingFactual(true);
-    addLog(`Memory: Formulating semantic tensor for factual ingestion...`, "info");
     try {
-      // Fetch 384d embedding using our local transformers extraction engine
-      const embedding = await browserEngine.getEmbedding(newFactualMemory, () => {});
-      if (embedding && Array.isArray(embedding)) {
-        const metadata: any = {};
-        if (selectedReqId !== "default") {
-          metadata.isolatedRAG = selectedReqId;
+      const chunks = chunkBySentences(newFactualMemory);
+      addLog(`Memory: Split input into ${chunks.length} sentence chunks for ingestion.`, "info");
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        addLog(`Memory: [${i + 1}/${chunks.length}] Formulating semantic tensor for: "${chunk.slice(0, 30)}..."`, "info");
+        const embedding = await browserEngine.getEmbedding(chunk, () => {});
+        
+        if (embedding && Array.isArray(embedding)) {
+          const metadata: any = {
+            classification: classifyChunk(chunk)
+          };
+          if (selectedReqId !== "default") {
+            metadata.isolatedRAG = selectedReqId;
+          }
+          await memoryStore.add({
+            id: (Date.now() + i).toString(),
+            text: chunk,
+            embedding,
+            timestamp: Date.now() + i,
+            metadata
+          });
+        } else {
+          throw new Error("Local model failed to extract a viable vector projection.");
         }
-        await memoryStore.add({
-          id: Date.now().toString(),
-          text: newFactualMemory.trim(),
-          embedding,
-          timestamp: Date.now(),
-          metadata: Object.keys(metadata).length > 0 ? metadata : undefined
-        });
-        await loadVectorMemories();
-        setNewFactualMemory("");
-        addLog(`Memory: Fact logged permanently in long-term Vector database.`, "success");
-      } else {
-        throw new Error("Local model failed to extract a viable vector projection.");
       }
+
+      await loadVectorMemories();
+      setNewFactualMemory("");
+      addLog(`Memory: Chunked memories logged permanently in long-term Vector database.`, "success");
     } catch (e: any) {
       addLog(`Memory Insertion Fault: ${e?.message || String(e)}`, "error");
     } finally {
@@ -186,11 +199,8 @@ export function MemoryDashboard() {
     try {
       const qEmbedding = await browserEngine.getEmbedding(searchTerm, () => {});
       if (qEmbedding && Array.isArray(qEmbedding)) {
-        // Query database with semantic Cosine similarity (topK=5, confidence_threshold=0.3)
         const results = await memoryStore.search(qEmbedding, 5, 0.25);
-        
-        // Filter search results to the selected memory bank
-        const filteredResults = results.filter(entry => {
+        const filteredResults = results.filter((entry) => {
           const entryRag = entry.metadata?.isolatedRAG;
           if (selectedReqId === "default") {
             return !entryRag;
@@ -210,7 +220,7 @@ export function MemoryDashboard() {
   const purgeCurrentBank = async () => {
     if (selectedReqId === "default") {
       if (confirm("Are you sure you want to flush all standard memories (Default Bank) in IndexedDB?")) {
-        const toKeep = vectorMemories.filter(m => m.metadata?.isolatedRAG);
+        const toKeep = vectorMemories.filter((m) => m.metadata?.isolatedRAG);
         await memoryStore.clear();
         for (const m of toKeep) {
           await memoryStore.add(m);
@@ -221,7 +231,7 @@ export function MemoryDashboard() {
       }
     } else {
       if (confirm(`Are you sure you want to flush all memories for the API request bank "${selectedReqId}"?`)) {
-        const toKeep = vectorMemories.filter(m => m.metadata?.isolatedRAG !== selectedReqId);
+        const toKeep = vectorMemories.filter((m) => m.metadata?.isolatedRAG !== selectedReqId);
         await memoryStore.clear();
         for (const m of toKeep) {
           await memoryStore.add(m);
@@ -254,8 +264,8 @@ export function MemoryDashboard() {
             key={tab}
             onClick={() => setActiveTab(tab as any)}
             className={`flex items-center justify-center gap-1.5 py-2.5 text-[9px] font-bold uppercase tracking-widest cursor-pointer transition-all border-b-2 ${
-              activeTab === tab 
-                ? "border-orange-500 text-orange-500 bg-orange-500/5 font-extrabold" 
+              activeTab === tab
+                ? "border-orange-500 text-orange-500 bg-orange-500/5 font-extrabold"
                 : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10"
             }`}
           >
@@ -266,528 +276,46 @@ export function MemoryDashboard() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-5">
-        
-        {/* TAB 1: INNER STATE */}
-        {activeTab === "state" && (
-          <div className="space-y-4">
-            
-            {/* Short-Term Working/Status Panel */}
-            <div className="p-3 bg-zinc-950/40 border border-border/50 rounded-sm space-y-2.5">
-              <div className="flex justify-between items-center text-[10px] uppercase font-mono tracking-wider font-bold">
-                <span className="text-orange-500/80">Working Log</span>
-                <span className="text-muted-foreground/40 font-normal">Active Session Frame</span>
-              </div>
-              <div className="space-y-2">
-                <div className="text-[9px] font-mono font-semibold text-muted-foreground">CURRENT_AGENT_TASK:</div>
-                <Input 
-                  value={lastAction}
-                  onChange={(e) => setLastAction(e.target.value)}
-                  className="bg-black/25 text-[10px] font-mono h-8 border-border text-foreground tracking-tight rounded-none focus-visible:ring-orange-500/30"
-                  placeholder="Inject active task frame..."
-                />
-              </div>
-
-              {/* Rolling short term chats list (from useAppContext message queue) */}
-              <div className="space-y-1.5 pt-1.5 border-t border-border/35">
-                <div className="flex items-center justify-between">
-                  <div className="text-[9px] font-mono text-muted-foreground/60 uppercase">Context Retention (Tokens)</div>
-                  <div className="text-[9px] font-mono text-orange-500">{contextMemoryLimit}</div>
-                </div>
-                <div 
-                  title={!(typeof window !== "undefined" && !!(window as any).electron) ? "This feature is capped by the browser. Download Omnix for less restraints." : undefined}
-                >
-                  <Slider 
-                    value={[contextMemoryLimit]}
-                    min={4096}
-                    max={65536}
-                    step={1024}
-                    onValueChange={(val) => setContextMemoryLimit(val[0])}
-                    disabled={!(typeof window !== "undefined" && !!(window as any).electron)}
-                    className="mb-2"
-                  />
-                </div>
-                <div className="max-h-[110px] overflow-y-auto space-y-1.5 pr-0.5 custom-scrollbar">
-                  {(() => {
-                    const visibleMsgs = messages.filter(m => !m.hidden);
-                    const retained = [];
-                    let len = 0;
-                    for (let i = visibleMsgs.length - 1; i >= 0; i--) {
-                      const m = visibleMsgs[i];
-                      const mLen = (m.content?.length || 0) / 4 + (m.image ? 125 : 0); // Approximate tokens
-                      if (retained.length > 0 && len + mLen > contextMemoryLimit) break;
-                      retained.unshift(m);
-                      len += mLen;
-                    }
-                    return retained.map((m, i) => (
-                      <div key={i} className="text-[9.5px] font-mono leading-tight bg-black/15 p-1.5 border border-white/5 flex flex-col gap-1">
-                        <div className="flex justify-between text-[7.5px] opacity-40 font-bold uppercase text-muted-foreground">
-                          <span>{m.role === "user" ? "USR" : "BOT"}</span>
-                          <span>{m.timestamp || "PRE_INDEX_TIME"}</span>
-                        </div>
-                        <div className="truncate text-foreground/80 font-normal">
-                          {m.content || "[Image/Media]"}
-                        </div>
-                      </div>
-                    ));
-                  })()}
-                  {messages.filter(m => !m.hidden).length === 0 && (
-                    <div className="text-[8.5px] italic text-muted-foreground/40 font-mono p-1">
-                      No global messages loaded in active frameset.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Inner Biological/Physiological Variables */}
-            <div className="p-4 bg-zinc-950/50 border border-border/50 rounded-sm space-y-4">
-              <div className="flex items-center gap-1.5 border-b border-border/30 pb-2">
-                <Heart className="w-4 h-4 text-orange-500 animate-[pulse_2s_infinite]" />
-                <h3 className="font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-200">Physiological Variables</h3>
-              </div>
-
-              {/* Mood Frame */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-[9px] font-mono uppercase text-muted-foreground font-bold">
-                  <span>Current Emotional State</span>
-                  <span className="text-orange-400 font-extrabold text-[10px]">{emotionalState}</span>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-                  {["Focused", "Curious", "Creative", "Analytical", "Excited", "Thoughtful"].map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setEmotionalState(m as any)}
-                      className={`py-1 text-[8.5px] font-mono uppercase border rounded-none cursor-pointer transition-colors ${
-                        emotionalState === m 
-                          ? "bg-orange-500/10 border-orange-500 text-orange-400 font-extrabold" 
-                          : "border-border/40 hover:border-border/80 text-muted-foreground hover:bg-white/5"
-                      }`}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Focus Topics Section */}
-              <div className="space-y-3 pt-3 border-t border-border/20">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[9px] font-mono uppercase text-muted-foreground font-bold">Focus Topics (Target Context)</span>
-                  </div>
-                  <span className={`text-[7.5px] font-mono border px-1 py-0.2 uppercase ${enableFocusTopics ? 'text-green-400 border-green-500/20 bg-green-500/5' : 'text-zinc-500 border-zinc-500/20 bg-zinc-500/5'}`}>
-                    {enableFocusTopics ? "ACTIVE" : "STANDBY"}
-                  </span>
-                </div>
-
-                {enableFocusTopics ? (
-                  <div className="space-y-3">
-                    {focusTopics && focusTopics.length > 0 ? (
-                      focusTopics.map((topic, i) => (
-                        <div key={topic.name || i} className="space-y-1 font-mono p-2 bg-black/15 border border-white/5 rounded-sm">
-                          <div className="flex justify-between text-[9px] uppercase font-bold">
-                            <span className="text-zinc-200 truncate max-w-[150px]">{topic.name}</span>
-                            <span className="text-orange-400 font-extrabold">{Math.round(topic.energy)}% focus</span>
-                          </div>
-                          <div className="w-full bg-zinc-900/80 h-1 rounded-full overflow-hidden border border-white/5">
-                            <div 
-                              className="bg-gradient-to-r from-orange-600 to-orange-400 h-full rounded-full transition-all duration-300"
-                              style={{ width: `${Math.min(100, Math.max(0, topic.energy))}%` }}
-                            />
-                          </div>
-                          <div className="flex justify-between text-[7px] text-muted-foreground/60">
-                            <span>DECAY: -{topic.decayRate.toFixed(1)}%/sec</span>
-                            <span>STABILITY: {Math.max(0, 100 - topic.decayRate * 10).toFixed(0)}/100</span>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-center py-4 text-muted-foreground/35 italic font-mono text-[8.5px] bg-black/10 border border-white/5 p-2">
-                        No active focus topics. Discuss a topic in chat to anchor attention.
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-center py-4 text-muted-foreground/35 italic font-mono text-[8.5px] bg-black/10 border border-white/5 p-2">
-                    Focus topics are disabled in Settings.
-                  </div>
-                )}
-              </div>
-
-              {/* Social Battery Slider */}
-              <div className="space-y-2 pt-2 border-t border-border/20">
-                <div className="flex justify-between text-[9px] font-mono uppercase text-muted-foreground font-bold">
-                  <span>Social Battery Level</span>
-                  <span className="font-bold text-orange-500">{socialBattery.toFixed(1)}%</span>
-                </div>
-                <div className="flex gap-4 items-center">
-                  <Slider 
-                    value={[socialBattery]} 
-                    onValueChange={(val) => setSocialBattery(val[0])} 
-                    max={100} 
-                    min={0} 
-                    step={0.5}
-                    className="flex-1 py-1"
-                  />
-                </div>
-              </div>
-
-              {/* Boredom Slider */}
-              <div className="space-y-2 pt-2 border-t border-border/20">
-                <div className="flex justify-between text-[9px] font-mono uppercase text-muted-foreground font-bold">
-                  <span>Boredom Matrix Level</span>
-                  <span className="font-bold text-blue-400">{boredom.toFixed(1)}%</span>
-                </div>
-                <div className="flex gap-4 items-center">
-                  <Slider 
-                    value={[boredom]} 
-                    onValueChange={(val) => setBoredom(val[0])} 
-                    max={100} 
-                    min={0} 
-                    step={0.5}
-                    className="flex-1 py-1"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* OCEAN Personality Factor Set (Openness, Conscientiousness, Extraversion, Agreeableness, Neuroticism) */}
-            <div className="p-4 bg-zinc-950/50 border border-border/50 rounded-sm space-y-4">
-              <div className="flex items-center gap-1.5 border-b border-border/30 pb-2">
-                <Brain className="w-4 h-4 text-orange-500" />
-                <h3 className="font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-200">OCEAN personality settings</h3>
-              </div>
-
-              {/* Active Tone Archetype Display */}
-              <div className="p-2.5 bg-orange-950/15 border border-orange-500/15 rounded-sm">
-                <div className="text-[8px] uppercase font-bold text-orange-400 tracking-wider font-mono">Mapped Tone Archetype:</div>
-                <div className="text-xs text-zinc-300 font-sans italic mt-1 capitalize leading-relaxed">
-                  "{[
-                    getToneDescriptor("openness", ocean.openness),
-                    getToneDescriptor("conscientiousness", ocean.conscientiousness),
-                    getToneDescriptor("extraversion", ocean.extraversion),
-                    getToneDescriptor("agreeableness", ocean.agreeableness),
-                    getToneDescriptor("neuroticism", ocean.neuroticism)
-                  ].filter(Boolean).join(", ")}"
-                </div>
-              </div>
-
-              <div className="space-y-3.5 font-mono">
-                {/* OPENNESS */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[8px] font-bold uppercase text-muted-foreground/80">
-                    <span>O_OPENNESS (Creative / Curious)</span>
-                    <span className="text-foreground font-semibold">{ocean.openness}%</span>
-                  </div>
-                  <Slider 
-                    value={[ocean.openness]} 
-                    onValueChange={(val) => updateOceanFactor("openness", val[0])} 
-                    max={100} min={0} step={1} className="py-1"
-                  />
-                </div>
-
-                {/* CONSCIENTIOUSNESS */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[8px] font-bold uppercase text-muted-foreground/80">
-                    <span>C_CONSCIENTIOUSNESS (Disciplined / Orderly)</span>
-                    <span className="text-foreground font-semibold">{ocean.conscientiousness}%</span>
-                  </div>
-                  <Slider 
-                    value={[ocean.conscientiousness]} 
-                    onValueChange={(val) => updateOceanFactor("conscientiousness", val[0])} 
-                    max={100} min={0} step={1} className="py-1"
-                  />
-                </div>
-
-                {/* EXTRAVERSION */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[8px] font-bold uppercase text-muted-foreground/80">
-                    <span>E_EXTRAVERSION (Outgoing / Social)</span>
-                    <span className="text-foreground font-semibold">{ocean.extraversion}%</span>
-                  </div>
-                  <Slider 
-                    value={[ocean.extraversion]} 
-                    onValueChange={(val) => updateOceanFactor("extraversion", val[0])} 
-                    max={100} min={0} step={1} className="py-1"
-                  />
-                </div>
-
-                {/* AGREEABLENESS */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[8px] font-bold uppercase text-muted-foreground/80">
-                    <span>A_AGREEABLENESS (Empathetic / Helpful)</span>
-                    <span className="text-foreground font-semibold">{ocean.agreeableness}%</span>
-                  </div>
-                  <Slider 
-                    value={[ocean.agreeableness]} 
-                    onValueChange={(val) => updateOceanFactor("agreeableness", val[0])} 
-                    max={100} min={0} step={1} className="py-1"
-                  />
-                </div>
-
-                {/* NEUROTICISM */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[8px] font-bold uppercase text-muted-foreground/80">
-                    <span>N_NEUROTICISM (Sensitive / Highly Aware)</span>
-                    <span className="text-foreground font-semibold">{ocean.neuroticism}%</span>
-                  </div>
-                  <Slider 
-                    value={[ocean.neuroticism]} 
-                    onValueChange={(val) => updateOceanFactor("neuroticism", val[0])} 
-                    max={100} min={0} step={1} className="py-1"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
+        {activeTab === "state" ? (
+          <StateTab
+            lastAction={lastAction}
+            setLastAction={setLastAction}
+            contextMemoryLimit={contextMemoryLimit}
+            setContextMemoryLimit={setContextMemoryLimit}
+            messages={messages}
+            emotionalState={emotionalState}
+            setEmotionalState={setEmotionalState}
+            focusTopics={focusTopics}
+            enableFocusTopics={enableFocusTopics}
+            socialBattery={socialBattery}
+            setSocialBattery={setSocialBattery}
+            boredom={boredom}
+            setBoredom={setBoredom}
+            ocean={ocean}
+            updateOceanFactor={updateOceanFactor}
+          />
+        ) : (
+          <FactualTab
+            selectedReqId={selectedReqId}
+            setSelectedReqId={setSelectedReqId}
+            reqIdCounts={reqIdCounts}
+            availableReqIds={availableReqIds}
+            newFactualMemory={newFactualMemory}
+            setNewFactualMemory={setNewFactualMemory}
+            isAddingFactual={isAddingFactual}
+            commitFactualMemory={commitFactualMemory}
+            searchTerm={searchTerm}
+            setSearchTerm={setSearchTerm}
+            performVectorSearch={performVectorSearch}
+            isSearching={isSearching}
+            searchResults={searchResults}
+            setSearchResults={setSearchResults}
+            filteredMemories={filteredMemories}
+            vectorMemories={vectorMemories}
+            purgeCurrentBank={purgeCurrentBank}
+            wipeVectorMemories={wipeVectorMemories}
+          />
         )}
-
-        {/* TAB 2: SEMANTIC/FACTUAL VECTOR DATABASES */}
-        {activeTab === "factual" && (
-          <div className="space-y-4">
-            
-            {/* Memory Bank Selector & Custom Switcher */}
-            <div className="p-4 bg-zinc-950/50 border border-border/50 rounded-sm space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-muted-foreground/80">Active Memory Bank</span>
-                <span className="text-[7.5px] font-mono text-orange-500/80 font-bold uppercase">Transaction Scope</span>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* Selector */}
-                <div className="space-y-1">
-                  <label className="text-[8px] font-mono uppercase text-muted-foreground/60 block">Select Existing Bank</label>
-                  <select 
-                    value={selectedReqId} 
-                    onChange={(e) => setSelectedReqId(e.target.value || "default")}
-                    className="w-full h-8 bg-zinc-900 border border-border/50 text-foreground text-[10px] font-mono rounded-none px-2 focus:outline-none focus:border-orange-500/50 cursor-pointer"
-                  >
-                    <option value="default" className="bg-zinc-950 text-foreground text-[10px] font-mono">
-                      Default / Main Bank ({reqIdCounts.defaultCount})
-                    </option>
-                    {availableReqIds.map((reqId) => (
-                      <option key={reqId} value={reqId} className="bg-zinc-950 text-foreground text-[10px] font-mono">
-                        API Scope: {reqId} ({reqIdCounts.counts[reqId] || 0})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Custom input switcher */}
-                <div className="space-y-1">
-                  <label className="text-[8px] font-mono uppercase text-muted-foreground/60 block">Switch to Custom Bank</label>
-                  <div className="flex gap-1">
-                    <input
-                      type="text"
-                      placeholder="Enter bank ID..."
-                      id="custom-bank-input"
-                      className="bg-black/25 text-[10px] font-mono h-8 border border-border/50 px-2 text-foreground tracking-tight rounded-none focus-visible:ring-orange-500/30 flex-1 outline-none"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const target = e.currentTarget;
-                          const val = target.value.trim();
-                          if (val) {
-                            setSelectedReqId(val);
-                            target.value = "";
-                          }
-                        }
-                      }}
-                    />
-                    <Button
-                      onClick={() => {
-                        const inputEl = document.getElementById("custom-bank-input") as HTMLInputElement;
-                        if (inputEl && inputEl.value.trim()) {
-                          setSelectedReqId(inputEl.value.trim());
-                          inputEl.value = "";
-                        }
-                      }}
-                      className="h-8 bg-zinc-900 border border-border hover:bg-orange-500/10 hover:border-orange-500/30 text-[9px] text-muted-foreground hover:text-orange-400 font-mono rounded-none px-2 cursor-pointer shrink-0"
-                    >
-                      SWITCH
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Badges of all available scopes to easily click & switch */}
-              {availableReqIds.length > 0 && (
-                <div className="space-y-1.5 pt-1.5 border-t border-border/20">
-                  <div className="text-[8px] font-mono uppercase text-muted-foreground/60">Quick Switch Scopes</div>
-                  <div className="flex flex-wrap gap-1">
-                    <button
-                      onClick={() => setSelectedReqId("default")}
-                      className={`px-1.5 py-0.5 font-mono text-[8.5px] rounded-sm border transition-all ${
-                        selectedReqId === "default"
-                          ? "bg-orange-500/20 border-orange-500 text-orange-400 font-bold"
-                          : "bg-zinc-900/40 border-border/30 text-muted-foreground hover:text-foreground hover:border-orange-500/30"
-                      }`}
-                    >
-                      default ({reqIdCounts.defaultCount})
-                    </button>
-                    {availableReqIds.map((reqId) => (
-                      <button
-                        key={reqId}
-                        onClick={() => setSelectedReqId(reqId)}
-                        className={`px-1.5 py-0.5 font-mono text-[8.5px] rounded-sm border transition-all ${
-                          selectedReqId === reqId
-                            ? "bg-orange-500/20 border-orange-500 text-orange-400 font-bold"
-                            : "bg-zinc-900/40 border-border/30 text-muted-foreground hover:text-foreground hover:border-orange-500/30"
-                        }`}
-                      >
-                        {reqId} ({reqIdCounts.counts[reqId] || 0})
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <p className="text-[8.5px] font-mono text-muted-foreground/50 leading-normal pt-1.5 border-t border-border/10">
-                {selectedReqId === "default" 
-                  ? "Displaying general/factual memories logged through standard interactions."
-                  : `Isolated memory segment active for reqId: "${selectedReqId}".`}
-              </p>
-            </div>
-
-            {/* Commit Factual memories block */}
-            <div className="p-4 bg-zinc-950/50 border border-border/50 rounded-sm space-y-3">
-              <div className="flex justify-between items-center text-[10px] uppercase font-mono tracking-wider font-bold">
-                <span className="text-orange-500/80">Episodic Memory Ingestion</span>
-                <span className="text-muted-foreground/40 font-mono">Real-time embedding generation</span>
-              </div>
-              <div className="space-y-2">
-                <textarea
-                  value={newFactualMemory}
-                  onChange={(e) => setNewFactualMemory(e.target.value)}
-                  className="w-full bg-black/40 text-[10.5px] p-2 leading-tight border border-border hover:border-orange-500/20 text-foreground tracking-tight rounded-none focus-visible:ring-orange-500/30 font-mono resize-none h-16 min-h-[60px]"
-                  placeholder={selectedReqId === "default" 
-                    ? "Type a custom fact or memory (e.g. 'Jane plays guitar and prefers green tea over coffee')..."
-                    : `Type a fact to ingest into isolated memory bank: "${selectedReqId}"...`}
-                />
-                
-                <Button 
-                  onClick={commitFactualMemory}
-                  disabled={isAddingFactual || !newFactualMemory.trim()}
-                  className="w-full h-8 bg-orange-600 hover:bg-orange-500 text-white font-mono text-[9px] uppercase tracking-widest rounded-none gap-2 font-bold select-none cursor-pointer"
-                >
-                  {isAddingFactual ? (
-                    <>
-                      <Compass className="w-3.5 h-3.5 animate-spin" />
-                      EXTRACTING_PROJECTION_...
-                    </>
-                  ) : (
-                    <>
-                      <Database className="w-3.5 h-3.5" />
-                      COMMIT_TO_LONG_TERM_MEM_
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-
-            {/* Vector Database Querying block */}
-            <div className="p-4 bg-zinc-950/50 border border-border/50 rounded-sm space-y-3.5">
-              <div className="flex justify-between items-center border-b border-border/20 pb-1.5">
-                <div className="flex items-center gap-1.5">
-                  <Database className="w-4 h-4 text-orange-500" />
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-200">Vector Workspace</span>
-                </div>
-                <span className="text-[9px] font-mono bg-zinc-900 border border-white/5 text-zinc-400 py-0.5 px-2 tabular-nums">
-                  {filteredMemories.length} / {vectorMemories.length} RECORDS
-                </span>
-              </div>
-
-              {/* Vector Query Search Interface */}
-              <div className="flex gap-1.5">
-                <Input 
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && performVectorSearch()}
-                  className="bg-black/25 text-[10px] font-mono h-8 border-border text-foreground tracking-tight rounded-none focus-visible:ring-orange-500/30 flex-1"
-                  placeholder="Cosine similarity lookup..."
-                />
-                <Button 
-                  onClick={performVectorSearch}
-                  size="icon"
-                  className="h-8 w-8 bg-zinc-900 border border-border rounded-none hover:bg-orange-500/10 hover:border-orange-500/30 text-muted-foreground hover:text-orange-400 shrink-0 cursor-pointer"
-                  title="Search Vector database"
-                >
-                  {isSearching ? <Compass className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-                </Button>
-              </div>
-
-              {/* Search results or raw memory entries list */}
-              <div className="space-y-2">
-                <div className="flex justify-between text-[8px] font-mono text-muted-foreground uppercase tracking-wider font-bold">
-                  <span>{searchResults !== null ? "Similarity Projection Results" : "Durable Facts (Current Bank)"}</span>
-                  {searchResults !== null && (
-                    <button onClick={() => setSearchResults(null)} className="text-orange-500 hover:underline">
-                      RESET_VIEW
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-0.5 custom-scrollbar">
-                  {(searchResults || filteredMemories).map((entry, idx) => (
-                    <div key={entry.id || idx} className="p-2 bg-black/20 border border-white/5 font-mono text-[9px] leading-relaxed relative group flex flex-col gap-1 rounded-sm">
-                      <div className="flex justify-between items-center text-[7px] text-muted-foreground/50 font-bold uppercase">
-                        <div className="flex items-center gap-1">
-                          <Clock className="w-2.5 h-2.5 opacity-60" />
-                          <span>{new Date(entry.timestamp).toLocaleString()}</span>
-                        </div>
-                        {searchResults !== null && (
-                          <span className="text-emerald-400 bg-emerald-500/5 px-1 py-0.2 rounded border border-emerald-500/10 font-bold">
-                            SIM_S: ~{(0.85 - (idx * 0.08)).toFixed(3)}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-foreground/95 break-words font-light">
-                        {entry.text}
-                      </div>
-                      {entry.metadata?.isolatedRAG && (
-                        <div className="text-[7.5px] text-orange-400 font-mono font-semibold uppercase mt-0.5 flex items-center gap-1">
-                          <span className="h-1.5 w-1.5 bg-orange-500 rounded-full animate-pulse"></span>
-                          BANK: {entry.metadata.isolatedRAG}
-                        </div>
-                      )}
-                      <div className="text-[7px] text-muted-foreground/30 font-mono tracking-tighter truncate mt-0.5 pr-8">
-                        VECT_384D: [{entry.embedding.slice(0, 3).map(n => n.toFixed(3)).join(", ")} ...]
-                      </div>
-                    </div>
-                  ))}
-
-                  {(searchResults || filteredMemories).length === 0 && (
-                    <div className="text-center py-6 text-muted-foreground/35 italic font-mono text-[9.5px]">
-                      No semantic facts logged inside this bank yet.
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="pt-2 border-t border-white/5 flex gap-2 justify-end">
-                <Button 
-                  onClick={purgeCurrentBank} 
-                  variant="destructive" 
-                  size="sm" 
-                  className="h-7 rounded-none bg-red-950/10 text-red-400 hover:bg-red-500/10 border border-red-500/25 text-[9px] uppercase tracking-wider font-mono gap-1 cursor-pointer font-bold leading-none"
-                >
-                  <Trash className="w-3 h-3" />
-                  Purge Current Bank
-                </Button>
-                <Button 
-                  onClick={wipeVectorMemories} 
-                  variant="destructive" 
-                  size="sm" 
-                  className="h-7 rounded-none bg-red-950/20 text-red-400 hover:bg-red-500/10 border border-red-500/25 text-[9px] uppercase tracking-wider font-mono gap-1 cursor-pointer font-bold leading-none"
-                >
-                  <Trash className="w-3 h-3" />
-                  Wipe Entire DB
-                </Button>
-              </div>
-
-            </div>
-          </div>
-        )}
-
       </div>
     </div>
   );

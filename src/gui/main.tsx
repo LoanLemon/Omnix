@@ -17,17 +17,48 @@ if (typeof globalThis !== 'undefined' && globalThis.navigator && globalThis.navi
       globalThis.navigator.gpu.requestAdapter = async function (options?: any) {
         const adapter = await originalRequestAdapter.call(globalThis.navigator.gpu, options);
         if (adapter) {
-          // Intercept requestDevice to drop 'shader-int64'
+          // Intercept requestDevice to claim maximum physical GPU limits & drop 'shader-int64'
           const originalRequestDevice = adapter.requestDevice;
           if (typeof originalRequestDevice === 'function') {
             adapter.requestDevice = async function (deviceDescriptor?: any) {
-              if (deviceDescriptor && deviceDescriptor.requiredFeatures) {
+              if (!deviceDescriptor) {
+                deviceDescriptor = {};
+              }
+              if (deviceDescriptor.requiredFeatures) {
                 if (Array.isArray(deviceDescriptor.requiredFeatures)) {
                   deviceDescriptor.requiredFeatures = deviceDescriptor.requiredFeatures.filter(
                     (f: any) => f !== 'shader-int64'
                   );
                 }
+              } else {
+                deviceDescriptor.requiredFeatures = [];
               }
+
+              // Enable shader-f16 support explicitly if the physical hardware supports it
+              if (adapter.features && typeof adapter.features.has === 'function' && adapter.features.has('shader-f16')) {
+                if (Array.isArray(deviceDescriptor.requiredFeatures) && !deviceDescriptor.requiredFeatures.includes('shader-f16')) {
+                  deviceDescriptor.requiredFeatures.push('shader-f16');
+                }
+              }
+
+              // Force WebGPU device limits to the maximum limits allowed by the adapter/GPU
+              if (!deviceDescriptor.requiredLimits) {
+                deviceDescriptor.requiredLimits = {};
+              }
+              const limitKeys = [
+                "maxStorageBufferBindingSize",
+                "maxBufferSize",
+                "maxComputeWorkgroupStorageSize"
+              ];
+              if (adapter.limits) {
+                const limits = adapter.limits as any;
+                for (const key of limitKeys) {
+                  if (key in limits) {
+                    deviceDescriptor.requiredLimits[key] = limits[key];
+                  }
+                }
+              }
+
               const device = await originalRequestDevice.call(adapter, deviceDescriptor);
               if (device) {
                 if (device.features && typeof device.features.has === 'function') {

@@ -121,20 +121,36 @@ export class WorkerModelEngine {
     console.log(`📦 (Worker) Persistent Director Engine Dtype: ${requestedDtype}`);
     
     let finalDtype = requestedDtype;
+    let directorDevice = "webgpu";
     const hasShaderF16 = await checkShaderF16Support();
     if (!hasShaderF16) {
       if (finalDtype === "fp16") {
-        console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to fp32 for Persistent Director`);
-        finalDtype = "fp32";
+        const hasFp32 = info.qtypes && info.qtypes.some(qt => ["fp32", "fp32-merged", "float32"].includes(qt.toLowerCase()));
+        if (hasFp32) {
+          console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to fp32 for Persistent Director`);
+          finalDtype = "fp32";
+        } else {
+          console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported and no fp32 fallback. Falling back to WASM for Persistent Director`);
+          directorDevice = "wasm";
+        }
       } else if (finalDtype === "q4f16") {
-        console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to q4 for Persistent Director`);
-        finalDtype = "q4";
+        const hasQ4Fallback = info.qtypes && info.qtypes.some(qt => {
+          const l = qt.toLowerCase();
+          return (l === "q4" || l === "q4fp32" || l === "int4") && !l.includes("f16") && !l.includes("fp16");
+        });
+        if (hasQ4Fallback) {
+          console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to q4 for Persistent Director`);
+          finalDtype = "q4";
+        } else {
+          console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported and no q4 fallback. Falling back to WASM for Persistent Director`);
+          directorDevice = "wasm";
+        }
       }
     }
     
     if (modelId.toLowerCase().includes("gemma-4")) {
       console.log(`🚀 (Worker) Loading Persistent Director Engine (Gemma 4): ${info.modelID}...`);
-      options.device = "webgpu";
+      options.device = directorDevice;
       options.dtype = finalDtype;
 
       if (!this.Gemma4ForConditionalGeneration) await this.init();
@@ -148,9 +164,13 @@ export class WorkerModelEngine {
       try {
         this.directorModel = await (this.Gemma4ForConditionalGeneration as any).from_pretrained(info.modelID, options);
       } catch (e) {
-        console.warn("Director Gemma 4 WebGPU failed, falling back to WASM:", e);
+        console.warn("Director Gemma 4 WebGPU failed, trying WASM fallback:", e);
         options.device = "wasm";
-        options.dtype = (finalDtype === "fp16" || finalDtype === "q8") ? "q4" : finalDtype;
+        const hasFallback = info.qtypes && info.qtypes.some(qt => {
+          const l = qt.toLowerCase();
+          return (l === "q4" || l === "q4fp32" || l === "int4") && !l.includes("f16") && !l.includes("fp16");
+        });
+        options.dtype = hasFallback ? "q4" : finalDtype;
         this.directorModel = await (this.Gemma4ForConditionalGeneration as any).from_pretrained(info.modelID, options);
       }
 
@@ -162,15 +182,19 @@ export class WorkerModelEngine {
       try {
         this.director = await pipeline("text-generation", info.modelID, {
           ...options,
-          device: "webgpu",
+          device: directorDevice,
           dtype: finalDtype
         });
       } catch (e) {
-        console.warn("Director WebGPU failed in worker, falling back to WASM:", e);
+        console.warn("Director WebGPU failed in worker, trying WASM fallback:", e);
+        const hasFallback = info.qtypes && info.qtypes.some(qt => {
+          const l = qt.toLowerCase();
+          return (l === "q4" || l === "q4fp32" || l === "int4") && !l.includes("f16") && !l.includes("fp16");
+        });
         this.director = await pipeline("text-generation", info.modelID, {
           ...options,
           device: "wasm",
-          dtype: (finalDtype === "fp16" || finalDtype === "q8") ? "q4" : finalDtype
+          dtype: hasFallback ? "q4" : finalDtype
         });
       }
       this.directorModelId = modelId;
@@ -278,6 +302,18 @@ export class WorkerModelEngine {
   }
 
   async loadModel(category: string, modelId: string, sendProgress?: (p: any) => void, customDtype?: string) {
+    if (this.isLowMemory && (category === "text" || category === "coder")) {
+      const originalInfo = MODELS.find(m => m.id === modelId || m.modelID === modelId);
+      if (originalInfo && originalInfo.size && (originalInfo.size.includes("GB") || parseFloat(originalInfo.size) > 1.0)) {
+        // Find a lightweight, memory-safe fallback model to prevent worker crash (heap exhaustion on WASM CPU)
+        const fallbackModel = MODELS.find(m => m.id === "qwen-2.5-Instruct-abliterated-0.5b-q4" || m.id === "qwen-3-0.6b-q4");
+        if (fallbackModel && fallbackModel.id !== modelId) {
+          console.warn(`⚠️ (Worker) Low-Memory / WASM Fallback Mode is Active. Redirecting from heavy model ${modelId} (${originalInfo.size}) to memory-safe lightweight model ${fallbackModel.id} (${fallbackModel.size}) to prevent worker crash.`);
+          modelId = fallbackModel.id;
+        }
+      }
+    }
+
     const resolved = normalizeAndRegisterModel(modelId, category as any);
     modelId = resolved.id;
     const modelKey = `${category}:${modelId}`;
@@ -315,7 +351,7 @@ export class WorkerModelEngine {
     let finalDtype = dtype.toLowerCase();
 
     const isJanus = info.id.toLowerCase().includes("janus");
-    const deviceChoice = (isJanus && !this.isLowMemory) ? {
+    let deviceChoice = (isJanus && !this.isLowMemory) ? {
       prepare_inputs_embeds: 'wasm',
       language_model: 'webgpu',
       lm_head: 'webgpu',
@@ -332,11 +368,26 @@ export class WorkerModelEngine {
       const hasShaderF16 = await checkShaderF16Support();
       if (!hasShaderF16) {
         if (finalDtype === "fp16") {
-          console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to fp32 for ${info.name}`);
-          finalDtype = "fp32";
+          const hasFp32 = info.qtypes && info.qtypes.some(qt => ["fp32", "fp32-merged", "float32"].includes(qt.toLowerCase()));
+          if (hasFp32) {
+            console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to fp32 for ${info.name}`);
+            finalDtype = "fp32";
+          } else {
+            console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported and no fp32 fallback. Falling back to WASM for ${info.name}`);
+            deviceChoice = "wasm";
+          }
         } else if (finalDtype === "q4f16") {
-          console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to q4 for ${info.name}`);
-          finalDtype = "q4";
+          const hasQ4Fallback = info.qtypes && info.qtypes.some(qt => {
+            const l = qt.toLowerCase();
+            return (l === "q4" || l === "q4fp32" || l === "int4") && !l.includes("f16") && !l.includes("fp16");
+          });
+          if (hasQ4Fallback) {
+            console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported. Falling back to q4 for ${info.name}`);
+            finalDtype = "q4";
+          } else {
+            console.warn(`⚠️ (Worker) WebGPU shader-f16 NOT supported and no q4 fallback. Falling back to WASM for ${info.name}`);
+            deviceChoice = "wasm";
+          }
         }
       }
     }
@@ -351,6 +402,18 @@ export class WorkerModelEngine {
 
     const tryLoad = async (options: any) => {
       if (category === "music-gen") {
+        if (info.id === "ACE-Step-v1.5-ONNX") {
+          const { AceStepPipeline } = await import("./modes/music");
+          const pipelineInstance = new AceStepPipeline(options.dtype || "q4");
+          await pipelineInstance.load((p: any) => {
+            if (sendProgress) {
+              sendProgress(p);
+            }
+          });
+          this.model = pipelineInstance;
+          this.processor = { isAceStep: true };
+          return;
+        }
         if (!this.MusicgenForConditionalGeneration) await this.init();
         this.processor = await AutoProcessor.from_pretrained(info.modelID);
         this.model = await (this.MusicgenForConditionalGeneration as any).from_pretrained(info.modelID, options);
@@ -511,6 +574,12 @@ export class WorkerModelEngine {
         maxTokens = Math.max(maxTokens, this.isLowMemory ? 768 : 1280);
       }
 
+      // Apply dynamic model-level tokenBoost if configured (e.g. for thinking/reasoning models)
+      const modelInfo = normalizeAndRegisterModel(modelId, category as any);
+      if (modelInfo && modelInfo.tokenBoost) {
+        maxTokens += modelInfo.tokenBoost;
+      }
+
       const capacity = this.getModelCapacity();
       if (maxTokens > capacity) {
         console.log(`⚠️ Requested maxTokens (${maxTokens}) exceeds model capacity (${capacity}). Capping to capacity.`);
@@ -519,7 +588,7 @@ export class WorkerModelEngine {
 
       // 1. Music Gen Mode
       if (category === "music-gen") {
-        return await handleMusicInference(this, input, maxTokens);
+        return await handleMusicInference(this, input, maxTokens, sendProgress, options);
       }
 
       // 2. STT or TTS Realtime Audio Mode
@@ -561,7 +630,15 @@ export class WorkerModelEngine {
         errMsg.toLowerCase().includes("failed to create") ||
         errMsg.toLowerCase().includes("webgpu") ||
         errMsg.toLowerCase().includes("lost") ||
-        errMsg.toLowerCase().includes("device");
+        errMsg.toLowerCase().includes("device") ||
+        errMsg.toLowerCase().includes("ortrun") ||
+        errMsg.toLowerCase().includes("mapasync") ||
+        errMsg.toLowerCase().includes("gpubuffer") ||
+        errMsg.toLowerCase().includes("previous error") ||
+        errMsg.toLowerCase().includes("createbuffer") ||
+        errMsg.toLowerCase().includes("allocation") ||
+        errMsg.toLowerCase().includes("rangeerror") ||
+        errMsg.toLowerCase().includes("out of memory");
 
       if (isSessionOrMemoryError) {
         console.warn(`⚠️ (Worker) Inference execution failed with session/memory error: ${errMsg}. Retrying with WASM/Safe mode fallback...`);
@@ -652,9 +729,23 @@ export class WorkerModelEngine {
 
 const engine = new WorkerModelEngine();
 
+// Store pending main-thread requests
+export const pendingMainRequests = new Map<string, (value: any) => void>();
+(self as any).pendingMainRequests = pendingMainRequests;
+
 // Web Worker API listener
 self.addEventListener("message", async (e: MessageEvent) => {
   const { type, requestId, payload } = e.data;
+
+  // Handle tts_response returned from the main thread
+  if (type === "tts_response") {
+    const resolve = pendingMainRequests.get(requestId);
+    if (resolve) {
+      resolve(payload);
+      pendingMainRequests.delete(requestId);
+    }
+    return;
+  }
 
   try {
     switch (type) {

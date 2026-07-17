@@ -57,6 +57,29 @@ export function InputDock({
     activeCategory,
   } = useApp();
 
+  React.useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf("image") !== -1) {
+            const file = items[i].getAsFile();
+            if (file) {
+              analyzeImage(file);
+              e.preventDefault();
+              break;
+            }
+          }
+        }
+      }
+    };
+
+    window.addEventListener("paste", handleGlobalPaste);
+    return () => {
+      window.removeEventListener("paste", handleGlobalPaste);
+    };
+  }, [analyzeImage]);
+
   const currentModelId = isCoderMode ? selectedModels.coder : selectedModels[activeCategory] || selectedModels.text;
   const currentModel = MODELS.find(m => m.id === currentModelId);
   const maxContext = Math.floor((currentModel?.maxContextChars || 8192) * 0.8);

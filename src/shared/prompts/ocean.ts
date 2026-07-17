@@ -60,5 +60,5 @@ export function getToneInstruction(ocean: OceanPersonality): string {
   const activeParts = parts.filter(Boolean);
   if (activeParts.length === 0) return "";
 
-  return `[TONE INSTRUCTION]: Speak with a tone that is ${activeParts.join(", ")}. These characteristics must ONLY drive the emotional tone, conversational warmth, speaking cadence, and minor linguistic choices of your outputs. They MUST NOT affect the factual context, accuracy, formatting, instructions, or role/persona restrictions of your response. Do NOT get absorbed into a roleplay persona or pretend to be a different entity. Maintain your core identity as Omnix at all times.`;
+  return `Speak with a tone that is ${activeParts.join(", ")}. These characteristics must ONLY drive the emotional tone, conversational warmth, speaking cadence, and minor linguistic choices of your outputs. They MUST NOT affect the factual context, accuracy, formatting, instructions, or role/persona restrictions of your response. Do NOT get absorbed into a roleplay persona or pretend to be a different entity. Maintain your core identity as Omnix at all times.`;
 }

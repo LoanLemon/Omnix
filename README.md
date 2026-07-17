@@ -6,6 +6,7 @@ Omnix is a local multi-modal AI studio that allows you to orchestrate vision, sp
 
 - **Multi-Modal**: Support for Text, Vision, STT, TTS, Image Generation, and Music Generation.
 - **Multi-Model Routing & Scheduling (MMRS)**: Advanced dual-Web-Worker engine allowing concurrent text generation and auxiliary operations (STT, TTS, Image Gen, Music Gen) simultaneously.
+- **Dual Brain Inference Engine**: Run parallel text evaluations and speed chunking across twin dedicated linguistic Web Workers (`brain1` and `brain2`).
 - **Local First**: All models run locally using WebGPU or WASM.
 - **Theme Support**: Polished Light and Dark modes.
 - **Live Mode**: Real-time screen and voice analysis.
@@ -13,22 +14,28 @@ Omnix is a local multi-modal AI studio that allows you to orchestrate vision, sp
 
 ---
 
-## Multi-Model Routing & Scheduling (MMRS)
+## Multi-Model Routing & Scheduling (MMRS) & Dual Brain
 
-Omnix includes an advanced **Multi-Model Routing & Scheduling (MMRS)** engine designed to prevent single-thread execution bottlenecks.
+Omnix includes an advanced **Multi-Model Routing & Scheduling (MMRS)** and **Dual Brain** execution architecture designed to maximize local performance and prevent single-thread bottlenecks.
 
-### Dual Web-Worker Architecture
-- **Text Worker (`text`)**: Processes standard conversational chat, code generation, and complex text completions.
+### Worker Architecture & Topology
+- **Brain 1 & Brain 2 Workers (`brain1` / `brain2`)**: Paired linguistic workers dedicated to parallel text processing when **Dual Brain Mode** is enabled.
+- **Text Worker (`text`)**: Fallback single-worker standard conversational chat, code generation, and text completions.
 - **Operations Worker (`op`)**: Handles background auxiliary pipelines, such as:
   - Speech-to-Text (STT) via Whisper
   - Text-to-Speech (TTS) via Kokoro
   - Image Generation via Janus-Pro
   - Music Generation
 
+### Dual Brain Operational Modes
+When the **DUAL_BRAIN** toggle is enabled under the sidebar, text queries are processed using twin-engine acceleration:
+1. **Speed Mode (`enhanced-speed`)**: Splices long text prompts or instructions into individual sentence-level chunks, processes them in parallel across `brain1` and `brain2` concurrently, and utilizes a coordination prompt to seamlessly synthesize the outputs back into a cohesive, high-speed response stream.
+2. **Check Mode (`double-check`)**: Solves hallucination and logic faults by generating candidate answers from both brains in parallel for each sentence, initiating a real-time peer review between the two models, selecting the highest-fidelity logical candidate, and outputting the consensus response.
+
 ### Key Benefits
-- **Zero-Block Multitasking**: Users can trigger voice synthesis (TTS) or generate images while continuing to chat and generate text uninterrupted.
-- **Independent Context Isolation**: Prevents heavy model switches from blocking the text reasoning pipeline.
-- **Dynamic Resource Toggle**: Can be enabled or disabled instantly using the **MULTI_MODEL_MMRS** control switch in the GUI sidebar.
+- **Zero-Block Multitasking**: Trigger heavy vocal synthesis (TTS) or generate images while continuing to chat and generate text uninterrupted.
+- **Parallel Inference Throughput**: Substantially higher generation throughput and peer-verified precision.
+- **Dynamic Resource Toggle**: Can be enabled or disabled instantly using the **MULTI_MODEL_MMRS** and **DUAL_BRAIN** control switches in the GUI sidebar.
 
 ---
 
@@ -182,7 +189,25 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   }
   ```
 
-#### 8. Inject Background Story / Lore (`POST /api/injectRAG`)
+#### 8. Wait Voice (Microphone Speech-to-Text) (`GET/POST /api/waitVoice` or `/api/wait-voice`)
+- Actively triggers the host microphone, listens for voice activity, detects natural pauses/silence, auto-stops recording, transcribes the local audio buffer with Whisper STT, and returns the transcribed text to the requester.
+- **Body / Query**:
+  ```json
+  {
+    "maxDuration": 10000, // Optional, max recording duration in ms (default: 10000)
+    "silenceDuration": 1500, // Optional, silence duration in ms before auto-stop (default: 1500)
+    "silenceThreshold": 0.005, // Optional, RMS voice activity amplitude silence threshold (default: 0.005)
+    "reqId": "string" // Optional tracking key for logs & correlation
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "text": "Hello, this is my spoken response."
+  }
+  ```
+
+#### 9. Inject Background Story / Lore (`POST /api/injectRAG`)
 - **Body**:
   ```json
   {
@@ -205,7 +230,7 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   }
   ```
 
-#### 9. Health Check (`GET /api/health`)
+#### 10. Health Check (`GET /api/health`)
 - **Response**:
   ```json
   {
@@ -214,7 +239,70 @@ Omnix provides a local API running on `http://localhost:9777/api`.
   }
   ```
 
-#### 10. Conversation History Management
+#### 11. Log Watcher Configuration (`GET/POST /api/log-watcher/config`)
+- **GET /api/log-watcher/config**: Retrieve the list of active watch filepaths and enabled state.
+  - **Response**:
+    ```json
+    {
+      "filepaths": ["/path/to/log.txt"],
+      "enabled": true
+    }
+    ```
+- **POST /api/log-watcher/config**: Update the monitored queue of filepaths and active watcher daemon status.
+  - **Body**:
+    ```json
+    {
+      "filepaths": ["/path/to/log.txt"],
+      "enabled": true
+    }
+    ```
+  - **Response**:
+    ```json
+    {
+      "success": true,
+      "config": {
+        "filepaths": ["/path/to/log.txt"],
+        "enabled": true
+      }
+    }
+    ```
+
+#### 12. Log Watcher Log File Syntax & Processing Engine
+The Log Watcher daemon actively monitors the configured filepaths for updates. When a file grows, it extracts the new contents and processes requests matching the following log block format:
+
+##### Standard Log API Block Format
+```text
+# OmnixLogAPI:/api/[Endpoint]
+Payload: { "your": "json", "params": true }
+Passthru: {"state": 0, "targetModelId": 0}
+Response: [log_filename]_omnixResponse.txt
+```
+
+- **Timestamp/Info Prefixes**: Lines in log files are often prefixed with timestamps or process info. The parser automatically strips standard prefixes (e.g., `13:29:25 [INFO] ["GTaiO01"] # OmnixLogAPI:/api/[Endpoint]`) to locate the endpoint and retrieve the clean payload block.
+- **`Response:` Override**: If the `Response:` line is specified, Omnix writes the API response to the named file (resolved relative to the directory of the watched log file if it's a relative path). If omitted, it defaults to `[original_log_filepath]_omnixResponse.txt`.
+- **Special JS/TS Variable Injection**: If the target response filepath ends with `.js` or `.ts` (e.g. `GameMod.js`), instead of overwriting the entire file, Omnix:
+  1. Checks if the variable definition `let OmnixResponse = ...;` already exists in the file and replaces it, or prepends `let OmnixResponse = "your response string";` at the very top.
+  2. Checks for a `Passthru:` line in the log block. If present, it will unescape and write/inject `let OmnixPassthru = "your passthru value";` in the exact same manner. This is perfect for retaining state parameters across headless invocations.
+- **`RESET` Command**: You can log `# OmnixLogAPI:RESET` with a target JS/TS script defined by `Response: file.js`. The watcher will automatically intercept the reset call and set `OmnixResponse` to an empty string (`""`), clearing out previous cached state.
+
+##### Example Log Blocks
+```text
+// Standard JSON query writing to log.txt_omnixResponse.txt
+13:29:25 [INFO] ["GTaiO01"] # OmnixLogAPI:/api/text
+Payload: { "prompt": "Identify the main character of Hamlet" }
+
+// Script injection with state preservation (Passthru)
+# OmnixLogAPI:/api/waitVoice
+Payload: { "maxDuration": 8000 }
+Passthru: {"state":3,"npcId":104}
+Response: GameMod.js
+
+// Resetting/clearing a mod script's response variable
+# OmnixLogAPI:RESET
+Response: GameMod.js
+```
+
+#### 13. Conversation History Management
 - **Archive History (`POST /api/archive-history`)**:
   - **Body**: `{"oldReqId": "string", "newReqId": "string"}`
   - **Response**: `{"success": true, "message": "Archived oldReqId to newReqId"}`
@@ -254,7 +342,7 @@ For native/desktop distributions, you can launch the Omnix process silently with
 
 ### 2. Browser / Webview Headless Mode (`?mode=worker` query parameter)
 If you are embedding Omnix inside a standard browser context, custom webview, or frame:
-- **Web Worker URL**: Append `?mode=worker` (e.g. `http://localhost:3000/?mode=worker`) to the address.
+- **Web Worker URL**: Append `?mode=worker` (e.g. `http://localhost:9777/?mode=worker`) to the address.
 - **Behavior**: The page deactivates the heavy visual React DOM renderer and presents a single static black backdrop, maximizing the browser's thread priority and WebGPU acceleration for raw background API inference.
 
 ### 3. Network Security & Global IP Access (Disabled by Default)
@@ -293,7 +381,7 @@ You can request the API to package the audio samples into a standard **16-bit PC
 
 ```powershell
 # Call TTS API requesting a WAV file and save it directly to output.wav
-Invoke-RestMethod -Uri "http://localhost:3000/api/tts" -Method Post `
+Invoke-RestMethod -Uri "http://localhost:9777/api/tts" -Method Post `
   -ContentType "application/json" `
   -Body '{"text": "Hello world from Omnix TTS!", "format": "wav"}' `
   -OutFile "output.wav"
